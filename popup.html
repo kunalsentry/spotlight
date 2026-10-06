@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Spotlight</title>
+  <style>
+    /* Sentry (sentry.io) palette: dark violet text, blurple accent,
+       rich-black surfaces in dark mode. */
+    :root {
+      --bg: #ffffff;
+      --fg: #362d59;      /* dk-violet */
+      --muted: #79628c;   /* lt-violet */
+      --line: #ececf1;    /* gray-2 */
+      --chip: #f6f6f8;
+      --seg-on: #ffffff;
+      --accent: #7553ff;  /* blurple */
+      --track: #cfcfdb;   /* gray-3 */
+      color-scheme: light dark;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1f1633;    /* rich-black */
+        --fg: #ffffff;
+        --muted: #9093c1;
+        --line: #362d59;
+        --chip: #181225;  /* utility-black */
+        --seg-on: #362d59;
+        --track: #362d59;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; width: 264px; padding: 14px 16px 12px;
+      background: var(--bg); color: var(--fg);
+      font: 13px/1.4 Rubik, system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+
+    .top { display: flex; align-items: center; justify-content: space-between; }
+    .top h1 { font-size: 14px; margin: 0; font-weight: 600; }
+    .top small { display: block; color: var(--muted); font-size: 11.5px; margin-top: 1px; }
+
+    .switch { position: relative; width: 34px; height: 20px; flex: none; }
+    .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+    .switch span { position: absolute; inset: 0; border-radius: 10px; background: var(--track); transition: background 150ms; pointer-events: none; }
+    .switch span::after {
+      content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+      border-radius: 50%; background: #fff; transition: transform 150ms; box-shadow: 0 1px 2px rgba(0,0,0,.2);
+    }
+    .switch input:checked + span { background: var(--accent); }
+    .switch input:checked + span::after { transform: translateX(14px); }
+    .switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+    body.unavailable .switch { opacity: .4; pointer-events: none; }
+
+    .controls { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); display: grid; gap: 10px; }
+    .row { display: grid; grid-template-columns: 56px 1fr; align-items: center; gap: 10px; }
+    .row[hidden] { display: none; }
+    .row > span { color: var(--muted); font-size: 12px; }
+
+    .seg { display: flex; background: var(--chip); border-radius: 7px; padding: 2px; }
+    .seg button {
+      flex: 1; font: inherit; font-size: 12px; color: var(--muted); background: none;
+      border: 0; border-radius: 5px; padding: 4px 0; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 5px;
+    }
+    .seg button[aria-pressed="true"] { background: var(--seg-on); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+    .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .glyph { width: 12px; height: 12px; border: 1.5px solid currentColor; }
+    .glyph.circle { border-radius: 50%; }
+    .glyph.rounded { width: 15px; border-radius: 3.5px; }
+
+    .slider { display: grid; grid-template-columns: 1fr 38px; align-items: center; gap: 8px; }
+    .slider output { text-align: right; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    input[type="range"] { width: 100%; margin: 0; accent-color: var(--accent); }
+
+    .foot {
+      margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line);
+      display: flex; justify-content: space-between; align-items: center; font-size: 11.5px; color: var(--muted);
+    }
+    .foot a { color: var(--muted); text-decoration: none; }
+    .foot a:hover { color: var(--fg); }
+    kbd { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div>
+      <h1>Spotlight</h1>
+      <small id="status">Off</small>
+    </div>
+    <label class="switch"><input type="checkbox" id="spotlight" aria-label="Spotlight"><span></span></label>
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <span>Shape</span>
+      <div class="seg" data-setting="shape">
+        <button data-value="circle"><i class="glyph circle"></i>Circle</button>
+        <button data-value="rounded"><i class="glyph rounded"></i>Box</button>
+      </div>
+    </div>
+    <label class="row">
+      <span id="widthLabel">Size</span>
+      <div class="slider"><input type="range" id="width" min="60" max="2560" step="10"><output id="widthOut"></output></div>
+    </label>
+    <label class="row" id="heightRow">
+      <span>Height</span>
+      <div class="slider"><input type="range" id="height" min="60" max="2560" step="10"><output id="heightOut"></output></div>
+    </label>
+    <div class="row">
+      <span>Effect</span>
+      <div class="seg" data-setting="effect">
+        <button data-value="dim">Dim</button>
+        <button data-value="blur">Blur</button>
+        <button data-value="blur-dim">Both</button>
+      </div>
+    </div>
+    <label class="row">
+      <span>Strength</span>
+      <div class="slider"><input type="range" id="intensity" min="0" max="100" step="5"><output id="intensityOut"></output></div>
+    </label>
+  </div>
+
+  <div class="foot">
+    <span><kbd id="toggleKey">⌥S</kbd> on/off · click to place</span>
+    <a href="#" id="editShortcuts" title="Change keyboard shortcut">Shortcut</a>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
