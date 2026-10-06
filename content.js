@@ -39,7 +39,10 @@
   const FOLLOW_EASE = 0.35; // per-frame easing toward the cursor
   const SIZE_EASE = 0.2;    // per-frame easing toward a new size
   const ZOOM_EASE = 0.16;   // per-frame easing of the zoom animation
-  const ZOOM_FILL = 0.8;    // zoomed spotlight fills this much of the viewport (room for the toolbar)
+  const ZOOM_FILL = 0.8;    // preferred: the zoomed spotlight fills 80% of the window, keeping context
+  const ZOOM_MIN_GAIN = 1.25; // large spotlights still zoom at least this much, if it fits
+  const ZOOM_MARGIN = 12;   // px kept clear between a zoomed spotlight and the window edge
+  const TOOLBAR_GAP = 16;   // px between the spotlight and its toolbar
   const MAX_ZOOM = 6;
   const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -61,7 +64,7 @@
   // k animates 0 -> 1 (zoomed in) -> 0. `c` is the spotlight centre when the
   // zoom started; `base` is <body>'s unscaled top-left; `saved` its inline
   // transform styles, restored when the zoom ends.
-  const zoom = { k: 0, target: 0, scale: 1, c: null, el: null, base: null, saved: null };
+  const zoom = { k: 0, target: 0, scale: 1, to: null, c: null, el: null, base: null, saved: null };
   let swallowClick = false;      // eat the rest of the click that placed the spotlight
   let swallowTimer = 0;
   let rafId = 0;
@@ -270,8 +273,8 @@
     if (!zoom.el) return { x: spot.x, y: spot.y, w: drawn.w, h: drawn.h };
     const s = 1 + zoom.k * (zoom.scale - 1);
     return {
-      x: spot.x + zoom.k * (innerWidth / 2 - spot.x),
-      y: spot.y + zoom.k * (innerHeight / 2 - spot.y),
+      x: spot.x + zoom.k * (zoom.to.x - spot.x),
+      y: spot.y + zoom.k * (zoom.to.y - spot.y),
       w: drawn.w * s,
       h: drawn.h * s,
     };
@@ -375,8 +378,14 @@
       // Sit above the spotlight, or below it when there's no room at the top.
       const tw = toolbarEl.offsetWidth;
       const th = toolbarEl.offsetHeight;
-      let top = y - h / 2 - 16 - th; // clear of the top resize handle
-      if (top < 8) top = y + h / 2 + 16;
+      // Above the spotlight (clear of the top resize handle), else below it,
+      // else tucked just inside its top edge.
+      const above = y - h / 2 - TOOLBAR_GAP - th;
+      const below = y + h / 2 + TOOLBAR_GAP;
+      let top;
+      if (above >= 8) top = above;
+      else if (below + th <= innerHeight - 8) top = below;
+      else top = y - h / 2 + 8;
       top = clamp(top, 8, innerHeight - th - 8);
       const left = clamp(x - tw / 2, 8, innerWidth - tw - 8);
       toolbarEl.style.transform = `translate3d(${left}px, ${top}px, 0)`;
@@ -458,10 +467,32 @@
 
   // ------------------------------------------------------------------- zoom
 
-  // Scale at which the spotlight fills ZOOM_FILL of the viewport.
-  function fitScale() {
+  // How far to zoom and where the zoomed spotlight goes.
+  //
+  // Scale: by default the spotlight fills ZOOM_FILL of the window, so some of
+  // the surroundings stay visible. For large spotlights, where that would
+  // barely zoom, go up to ZOOM_MIN_GAIN — but never past `fit`, the most that
+  // keeps the whole spotlight on screen. Blending (rather than switching)
+  // means a bigger spotlight always zooms a little less, never suddenly more.
+  //
+  // Position: centred when the toolbar fits above or below; otherwise shifted
+  // down just enough to make room for the toolbar above (render() tucks the
+  // toolbar inside the top edge if even that isn't possible).
+  function zoomPlan() {
     const { w, h } = drawn ?? shapeSize();
-    return clamp(Math.min((innerWidth * ZOOM_FILL) / w, (innerHeight * ZOOM_FILL) / h), 1, MAX_ZOOM);
+    const preferred = Math.min((innerWidth * ZOOM_FILL) / w, (innerHeight * ZOOM_FILL) / h);
+    const fit = Math.min((innerWidth - 2 * ZOOM_MARGIN) / w, (innerHeight - 2 * ZOOM_MARGIN) / h);
+    const scale = clamp(Math.max(preferred, Math.min(fit, ZOOM_MIN_GAIN)), 1, Math.min(fit, MAX_ZOOM));
+    const zh = h * scale;
+    const toolbarRoom = (toolbarEl?.offsetHeight || 34) + TOOLBAR_GAP + 8;
+    const to = { x: innerWidth / 2, y: innerHeight / 2 };
+    const top = (innerHeight - zh) / 2;
+    if (top < toolbarRoom) {
+      // No room above or below when centred: move down, staying on screen.
+      const shifted = Math.min(toolbarRoom, innerHeight - ZOOM_MARGIN - zh);
+      if (shifted > top) to.y = shifted + zh / 2;
+    }
+    return { scale, to };
   }
 
   // `quiet`: an automatic zoom (after a resize) skips the "already fills the
@@ -469,9 +500,9 @@
   function setZoom(on, { quiet = false } = {}) {
     if (on) {
       if (!spot.pinned || zoom.target === 1) return;
-      const scale = fitScale();
-      if (scale < 1.05) {
-        if (!quiet) showHud('The spotlight already fills the screen', 1400);
+      const plan = zoomPlan();
+      if (plan.scale < 1.05) {
+        if (!quiet) showHud('Make the spotlight smaller to zoom in', 1600);
         return;
       }
       endDrag();
@@ -486,10 +517,11 @@
         zoom.saved = ['transform', 'transform-origin', 'transition'].map((p) => [p, el.style.getPropertyValue(p), el.style.getPropertyPriority(p)]);
         zoom.c = { x: spot.pinX, y: spot.pinY };
       }
-      zoom.scale = scale;
+      zoom.scale = plan.scale;
+      zoom.to = plan.to;
       zoom.target = 1;
       rootEl.classList.add('zoomed');
-      showHud(`Zoomed to ${Math.round(scale * 100)}%`, 1400);
+      showHud(`Zoomed to ${Math.round(plan.scale * 100)}%`, 1400);
     } else if (zoom.target !== 1) {
       return;
     } else {
@@ -517,8 +549,8 @@
       // The page follows the zoom's own centre, so a drag that starts while
       // zooming out moves only the spotlight, not the page.
       const s = 1 + zoom.k * (zoom.scale - 1);
-      const x = zoom.c.x + zoom.k * (innerWidth / 2 - zoom.c.x);
-      const y = zoom.c.y + zoom.k * (innerHeight / 2 - zoom.c.y);
+      const x = zoom.c.x + zoom.k * (zoom.to.x - zoom.c.x);
+      const y = zoom.c.y + zoom.k * (zoom.to.y - zoom.c.y);
       const tx = x - zoom.base.x - s * (zoom.c.x - zoom.base.x);
       const ty = y - zoom.base.y - s * (zoom.c.y - zoom.base.y);
       const st = zoom.el.style;
@@ -537,7 +569,7 @@
       if (value) el.style.setProperty(prop, value, priority);
       else el.style.removeProperty(prop);
     }
-    Object.assign(zoom, { k: 0, target: 0, scale: 1, c: null, el: null, base: null, saved: null });
+    Object.assign(zoom, { k: 0, target: 0, scale: 1, to: null, c: null, el: null, base: null, saved: null });
     rootEl?.classList.remove('zoomed');
   }
 
@@ -705,7 +737,7 @@
 
   function onResize() {
     clampPin();
-    if (zoom.target === 1) zoom.scale = fitScale();
+    if (zoom.target === 1) Object.assign(zoom, zoomPlan());
     if (zoom.el) startLoop();
     if (spot.active) paint();
   }
