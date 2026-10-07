@@ -6,6 +6,8 @@ const DEFAULTS = {
   height: 180,
   effect: 'dim',
   intensity: 70,
+  autoZoomResize: true,
+  autoZoomPlace: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -60,11 +62,15 @@ function syncVisibility() {
     setSliderMax('width', circle ? longest : viewport.w);
     setSliderMax('height', viewport.h);
   }
-  for (const group of document.querySelectorAll('.seg')) {
+  for (const group of document.querySelectorAll('.seg[data-setting]')) {
     const key = group.dataset.setting;
     for (const btn of group.querySelectorAll('button')) {
       btn.setAttribute('aria-pressed', String(btn.dataset.value === settings[key]));
     }
+  }
+  // Independent on/off toggles (each button is its own boolean setting).
+  for (const btn of document.querySelectorAll('button[data-toggle]')) {
+    btn.setAttribute('aria-pressed', String(!!settings[btn.dataset.toggle]));
   }
 }
 
@@ -88,7 +94,11 @@ async function init() {
     });
   }
 
-  for (const group of document.querySelectorAll('.seg')) {
+  for (const btn of document.querySelectorAll('button[data-toggle]')) {
+    btn.addEventListener('click', () => save({ [btn.dataset.toggle]: !settings[btn.dataset.toggle] }));
+  }
+
+  for (const group of document.querySelectorAll('.seg[data-setting]')) {
     group.addEventListener('click', (e) => {
       const btn = e.target.closest('button');
       if (btn) save({ [group.dataset.setting]: btn.dataset.value });

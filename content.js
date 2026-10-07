@@ -30,6 +30,8 @@
     height: 180,       // px (ignored for a circle)
     effect: 'dim',     // dim | blur | blur-dim
     intensity: 70,     // 0..100, meaning depends on the effect
+    autoZoomResize: true, // zoom in after resizing a placed spotlight with a handle
+    autoZoomPlace: false, // zoom in as soon as the spotlight is placed (stops following)
   };
   const MIN_SIZE = 60;
   const ROUNDED_RADIUS = 18;
@@ -61,10 +63,19 @@
   let sizeOverride = null;       // { w, h } or null
   let drawn = null;              // size currently on screen, eases toward shapeSize()
   let drag = null;               // { pointerId, offX, offY } while dragging
-  // k animates 0 -> 1 (zoomed in) -> 0. `c` is the spotlight centre when the
-  // zoom started; `base` is <body>'s unscaled top-left; `saved` its inline
-  // transform styles, restored when the zoom ends.
-  const zoom = { k: 0, target: 0, scale: 1, to: null, c: null, el: null, base: null, saved: null };
+  // The zoom is one view transform: a page point v (in normal, unzoomed
+  // viewport coordinates) is shown at  screen = o + s·v.  `view` eases toward
+  // `goal` each frame, all components by the same fraction, so any point that
+  // starts and ends at the same screen spot stays put throughout. The
+  // spotlight's own coordinates (spot.*) are page coordinates.
+  //   mode 'in'       zoomed in on the spotlight
+  //   mode 'anchored' back at normal size, offset so the point under the
+  //                   pointer when a drag started stays under it
+  //   mode 'out'      returning to the normal view; ends the zoom
+  // `base` is <body>'s unscaled top-left; `saved` its inline transform
+  // styles, restored when the zoom ends.
+  const IDENTITY = { ox: 0, oy: 0, s: 1 };
+  const zoom = { mode: 'none', view: { ...IDENTITY }, goal: { ...IDENTITY }, el: null, base: null, saved: null };
   let swallowClick = false;      // eat the rest of the click that placed the spotlight
   let swallowTimer = 0;
   let rafId = 0;
@@ -172,6 +183,14 @@
           pointer-events: auto; will-change: transform;
         }
         .on.pinned .toolbar { display: flex; }
+        /* When the toolbar has to sit over the spotlight area ("inset"), it
+           goes nearly transparent so it doesn't hide what's being shown;
+           fully visible on hover/keyboard focus, and briefly ("peek") when it
+           first appears or the zoom changes, so it's easy to find. Above or
+           below the spotlight it's always fully visible. */
+        .toolbar { transition: opacity 180ms ease; }
+        .toolbar.inset { opacity: 0.15; }
+        .toolbar.inset:hover, .toolbar.inset:focus-within, .toolbar.inset.peek, .dragging .toolbar.inset { opacity: 1; }
         .toolbar button {
           all: unset; box-sizing: border-box; width: 28px; height: 26px; border-radius: 6px;
           display: grid; place-items: center; color: #ececf1; cursor: pointer;
@@ -239,7 +258,7 @@
     root.querySelector('.follow').addEventListener('click', () => setPinned(false));
     root.querySelector('.close').addEventListener('click', () => setSpotlight(false));
     zoomBtn = root.querySelector('.zoom');
-    zoomBtn.addEventListener('click', () => setZoom(zoom.target !== 1));
+    zoomBtn.addEventListener('click', () => setZoom(zoom.mode !== 'in'));
 
     document.documentElement.appendChild(host);
     applyShape();
@@ -271,14 +290,17 @@
   // gliding toward the viewport centre and scaled up with the page.
   function visual() {
     if (!zoom.el) return { x: spot.x, y: spot.y, w: drawn.w, h: drawn.h };
-    const s = 1 + zoom.k * (zoom.scale - 1);
-    return {
-      x: spot.x + zoom.k * (zoom.to.x - spot.x),
-      y: spot.y + zoom.k * (zoom.to.y - spot.y),
-      w: drawn.w * s,
-      h: drawn.h * s,
-    };
+    const { ox, oy, s: k } = zoom.view;
+    return { x: ox + k * spot.x, y: oy + k * spot.y, w: drawn.w * k, h: drawn.h * k };
   }
+
+  // Screen point -> page point under it, through the current zoom view.
+  function toPage(x, y) {
+    if (!zoom.el) return { x, y };
+    const { ox, oy, s: k } = zoom.view;
+    return { x: (x - ox) / k, y: (y - oy) / k };
+  }
+
 
   // Rebuild the hole, outline and handle geometry for the on-screen size.
   function paint() {
@@ -389,6 +411,8 @@
       top = clamp(top, 8, innerHeight - th - 8);
       const left = clamp(x - tw / 2, 8, innerWidth - tw - 8);
       toolbarEl.style.transform = `translate3d(${left}px, ${top}px, 0)`;
+      const overlaps = left < x + w / 2 && left + tw > x - w / 2 && top < y + h / 2 && top + th > y - h / 2;
+      toolbarEl.classList.toggle('inset', overlaps);
       hudEl.classList.toggle('top', top > innerHeight / 2);
     }
     updateHover();
@@ -443,10 +467,13 @@
     if (pinned) {
       clearTimeout(hudTimer);
       hudEl.classList.remove('show');
-      spot.pinX = spot.x = mouse.x;
-      spot.pinY = spot.y = mouse.y;
+      const m = toPage(mouse.x, mouse.y);
+      spot.pinX = spot.x = m.x;
+      spot.pinY = spot.y = m.y;
       clampPin();
       render();
+      peekToolbar();
+      if (settings.autoZoomPlace) setZoom(true, { quiet: true });
     } else {
       endDrag();
       resetSize();
@@ -495,68 +522,98 @@
     return { scale, to };
   }
 
-  // `quiet`: an automatic zoom (after a resize) skips the "already fills the
-  // screen" notice.
-  function setZoom(on, { quiet = false } = {}) {
-    if (on) {
-      if (!spot.pinned || zoom.target === 1) return;
-      const plan = zoomPlan();
-      if (plan.scale < 1.05) {
-        if (!quiet) showHud('Make the spotlight smaller to zoom in', 1600);
-        return;
-      }
-      endDrag();
-      // Zooming back in mid-zoom-out after the spotlight moved: start over
-      // from its new position so page and spotlight stay aligned.
-      if (zoom.el && Math.hypot(zoom.c.x - spot.pinX, zoom.c.y - spot.pinY) > 1) endZoom();
-      if (!zoom.el) {
-        const el = document.body || document.documentElement;
-        const rect = el.getBoundingClientRect(); // unscaled: no transform yet
-        zoom.el = el;
-        zoom.base = { x: rect.left, y: rect.top };
-        zoom.saved = ['transform', 'transform-origin', 'transition'].map((p) => [p, el.style.getPropertyValue(p), el.style.getPropertyPriority(p)]);
-        zoom.c = { x: spot.pinX, y: spot.pinY };
-      }
-      zoom.scale = plan.scale;
-      zoom.to = plan.to;
-      zoom.target = 1;
-      rootEl.classList.add('zoomed');
-      showHud(`Zoomed to ${Math.round(plan.scale * 100)}%`, 1400);
-    } else if (zoom.target !== 1) {
-      return;
-    } else {
-      zoom.target = 0;
-    }
+  function beginZoom() {
+    if (zoom.el) return;
+    const el = document.body || document.documentElement;
+    const rect = el.getBoundingClientRect(); // unscaled: no transform yet
+    zoom.el = el;
+    zoom.base = { x: rect.left, y: rect.top };
+    zoom.saved = ['transform', 'transform-origin', 'transition'].map((p) => [p, el.style.getPropertyValue(p), el.style.getPropertyPriority(p)]);
+    zoom.view = { ...IDENTITY };
+  }
+
+  let peekTimer = 0;
+  function peekToolbar(ms = 1500) {
+    toolbarEl.classList.add('peek');
+    clearTimeout(peekTimer);
+    peekTimer = setTimeout(() => toolbarEl?.classList.remove('peek'), ms);
+  }
+
+  function syncZoomButton() {
+    const on = zoom.mode === 'in';
     zoomBtn.innerHTML = on ? `${ICONS.zoomOut}<span>Zoom out</span>` : ICONS.zoomIn;
     zoomBtn.title = on ? 'Zoom out' : 'Zoom in to the spotlight';
     zoomBtn.classList.toggle('active', on);
+    peekToolbar();
+  }
+
+  // Zoom in on the spotlight (on) or animate back to the normal view (off).
+  // `quiet`: an automatic zoom skips the "make it smaller" notice. Returns
+  // whether a zoom-in started.
+  function setZoom(on, { quiet = false } = {}) {
+    if (on) {
+      if (!spot.pinned || zoom.mode === 'in') return false;
+      const plan = zoomPlan();
+      if (plan.scale < 1.05) {
+        if (!quiet) showHud('Make the spotlight smaller to zoom in', 1600);
+        return false;
+      }
+      endDrag();
+      beginZoom();
+      // Spotlight centre (page coords) -> plan.to on screen, at plan.scale.
+      zoom.goal = { ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale };
+      zoom.mode = 'in';
+      rootEl.classList.add('zoomed');
+      showHud(`Zoomed to ${Math.round(plan.scale * 100)}%`, 1400);
+    } else {
+      if (!zoom.el || zoom.mode === 'out') return false;
+      zoom.goal = { ...IDENTITY };
+      zoom.mode = 'out';
+    }
+    syncZoomButton();
+    startLoop();
+    reportState();
+    return on;
+  }
+
+  // Back to normal size around the screen point (px, py): the page point
+  // under it stays exactly there, so a handle or edge grabbed while zoomed
+  // stays under the pointer, at the spotlight's real size. The page is left
+  // offset until the drag ends.
+  function anchorZoomOut(px, py) {
+    if (!zoom.el) return;
+    const p = toPage(px, py);
+    zoom.goal = { ox: px - p.x, oy: py - p.y, s: 1 };
+    zoom.mode = 'anchored';
+    syncZoomButton();
     startLoop();
     reportState();
   }
 
   // Returns true while still animating.
   function stepZoom() {
-    const dk = zoom.target - zoom.k;
-    let moving = true;
-    if (Math.abs(dk) > 0.002) zoom.k += dk * ZOOM_EASE;
-    else { zoom.k = zoom.target; moving = false; }
+    const v = zoom.view;
+    const g = zoom.goal;
+    const moving = Math.abs(g.s - v.s) > 0.0005 || Math.abs(g.ox - v.ox) > 0.1 || Math.abs(g.oy - v.oy) > 0.1;
+    if (moving) {
+      v.s += (g.s - v.s) * ZOOM_EASE;
+      v.ox += (g.ox - v.ox) * ZOOM_EASE;
+      v.oy += (g.oy - v.oy) * ZOOM_EASE;
+    } else {
+      Object.assign(v, g);
+    }
 
-    if (zoom.k === 0 && zoom.target === 0) {
+    if (!moving && zoom.mode === 'out') {
       endZoom();
     } else {
-      // Map the spotlight centre c to its on-screen position while scaling
-      // the page around <body>'s top-left: v' = base + t + s·(v − base).
-      // The page follows the zoom's own centre, so a drag that starts while
-      // zooming out moves only the spotlight, not the page.
-      const s = 1 + zoom.k * (zoom.scale - 1);
-      const x = zoom.c.x + zoom.k * (zoom.to.x - zoom.c.x);
-      const y = zoom.c.y + zoom.k * (zoom.to.y - zoom.c.y);
-      const tx = x - zoom.base.x - s * (zoom.c.x - zoom.base.x);
-      const ty = y - zoom.base.y - s * (zoom.c.y - zoom.base.y);
+      // screen = o + s·v  for page point v, applied to <body> scaled around
+      // its own top-left: screen = base + t + s·(v − base)  =>  t = o + (s−1)·base
+      const tx = v.ox + (v.s - 1) * zoom.base.x;
+      const ty = v.oy + (v.s - 1) * zoom.base.y;
       const st = zoom.el.style;
       st.setProperty('transform-origin', '0 0', 'important');
       st.setProperty('transition', 'none', 'important');
-      st.setProperty('transform', `translate(${tx}px, ${ty}px) scale(${s})`, 'important');
+      st.setProperty('transform', `translate(${tx}px, ${ty}px) scale(${v.s})`, 'important');
     }
     paint();
     return moving;
@@ -569,7 +626,7 @@
       if (value) el.style.setProperty(prop, value, priority);
       else el.style.removeProperty(prop);
     }
-    Object.assign(zoom, { k: 0, target: 0, scale: 1, to: null, c: null, el: null, base: null, saved: null });
+    Object.assign(zoom, { mode: 'none', view: { ...IDENTITY }, goal: { ...IDENTITY }, el: null, base: null, saved: null });
     rootEl?.classList.remove('zoomed');
   }
 
@@ -579,9 +636,9 @@
   // the spotlight; the white square resizes it.
   function onDragStart(e) {
     if (!spot.pinned || e.button !== 0) return;
-    // Zoom out and carry on: the drag works on the unzoomed spotlight, which
-    // glides back under the pointer as the zoom animates out.
-    setZoom(false);
+    // Zoomed: return to normal size around the grabbed point, so the handle or
+    // edge stays under the pointer and the spotlight keeps its size.
+    if (zoom.el) anchorZoomOut(e.clientX, e.clientY);
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -595,8 +652,9 @@
         right: spot.pinX + w / 2, bottom: spot.pinY + h / 2,
       };
     } else {
-      drag.offX = spot.pinX - e.clientX;
-      drag.offY = spot.pinY - e.clientY;
+      const p = toPage(e.clientX, e.clientY);
+      drag.offX = spot.pinX - p.x;
+      drag.offY = spot.pinY - p.y;
       rootEl.classList.add('dragging');
     }
     updateHover();
@@ -608,8 +666,9 @@
       resizeTo(e.clientX, e.clientY);
       return;
     }
-    spot.pinX = clamp(e.clientX + drag.offX, 0, innerWidth);
-    spot.pinY = clamp(e.clientY + drag.offY, 0, innerHeight);
+    const p = toPage(e.clientX, e.clientY);
+    spot.pinX = p.x + drag.offX;
+    spot.pinY = p.y + drag.offY;
     spot.x = spot.pinX; // no easing while dragging: it should feel attached
     spot.y = spot.pinY;
     render();
@@ -645,9 +704,12 @@
   function onDragEnd(e) {
     if (!drag || (e && e.pointerId !== drag.pointerId)) return;
     // Finishing a resize of a placed spotlight zooms in to the new area.
-    const zoomAfter = !!drag.resized && e?.type === 'pointerup';
+    const zoomAfter = settings.autoZoomResize && !!drag.resized && e?.type === 'pointerup';
     endDrag();
-    if (zoomAfter) setZoom(true, { quiet: true });
+    if (zoomAfter && setZoom(true, { quiet: true })) return;
+    // Otherwise glide an anchored (offset) page back to its normal position;
+    // the spotlight moves with it, still framing the same content.
+    if (zoom.mode === 'anchored') setZoom(false);
   }
 
   function endDrag() {
@@ -673,8 +735,9 @@
       return;
     }
 
-    const tx = spot.pinned ? spot.pinX : mouse.x;
-    const ty = spot.pinned ? spot.pinY : mouse.y;
+    const m = toPage(mouse.x, mouse.y);
+    const tx = spot.pinned ? spot.pinX : m.x;
+    const ty = spot.pinned ? spot.pinY : m.y;
     const dx = tx - spot.x;
     const dy = ty - spot.y;
     if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
@@ -737,7 +800,10 @@
 
   function onResize() {
     clampPin();
-    if (zoom.target === 1) Object.assign(zoom, zoomPlan());
+    if (zoom.mode === 'in') {
+      const plan = zoomPlan();
+      zoom.goal = { ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale };
+    }
     if (zoom.el) startLoop();
     if (spot.active) paint();
   }
@@ -745,7 +811,7 @@
   // ------------------------------------------------- extension integration
 
   function getState() {
-    return { spotlight: spot.active, pinned: spot.pinned, zoomed: zoom.target === 1, viewport: { w: innerWidth, h: innerHeight } };
+    return { spotlight: spot.active, pinned: spot.pinned, zoomed: zoom.mode === 'in', viewport: { w: innerWidth, h: innerHeight } };
   }
 
   function reportState() {
@@ -800,6 +866,7 @@
     cancelAnimationFrame(rafId);
     clearTimeout(hudTimer);
     clearTimeout(swallowTimer);
+    clearTimeout(peekTimer);
     endZoom();
     host?.remove();
     try {
