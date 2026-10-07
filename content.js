@@ -1,10 +1,16 @@
 // Spotlight — content script.
 //
-// The spotlight is a click-through, viewport-sized layer (inside a closed
-// shadow root attached to <html>) that applies the chosen effect — dim, blur,
-// or both — to everything except a hole. The hole is an SVG shape used as a
-// CSS mask layer, combined with a full-coverage layer via mask-composite:
-// exclude, so any shape and an optional soft edge work with any effect.
+// The spotlight is a click-through layer (inside a closed shadow root
+// attached to <html>) that applies the chosen effect — dim, blur, or both —
+// to everything except a hole. The hole is an SVG shape used as a CSS mask
+// layer, combined with a full-coverage layer via mask-composite: exclude, so
+// any shape and an optional soft edge work with any effect.
+//
+// Performance: this runs while the tab is being screen-shared, and anything
+// that makes Chrome repaint large areas each frame drops the shared video's
+// frame rate. So the masked layer extends a full viewport past the hole on
+// every side and is moved (and, while zooming, scaled) with a compositor-only
+// transform; the mask itself is only rebuilt when the spotlight's size changes.
 //
 // Flow: activate -> the spotlight follows the cursor -> click to place it ->
 // drag it by its edge or the toolbar handle; the page underneath stays fully
@@ -64,7 +70,11 @@
     x: mouse.x, y: mouse.y,       // rendered centre
     pinX: mouse.x, pinY: mouse.y, // placed centre
   };
-  let maskSize = { w: 0, h: 0 }; // size of the hole's mask image (shape + feather)
+  let painted = null;            // { key, w, h, Ew, Eh }: the hole size the mask was built for, and the layer's size
+  let ringKey = '';              // geometry the outline/handles were last laid out for
+  let blurPx = 0;                // backdrop blur radius for the current effect (0: none)
+  let backdropFilter = '';       // backdrop-filter currently applied to the mask layer
+  let toolbarSize = { w: 0, h: 0 }; // cached so render() never forces a layout
   // Size set by the resize handles on a placed spotlight. It's
   // temporary: going back to following the cursor, or turning the spotlight
   // off, returns to the configured size from the popup.
@@ -83,7 +93,7 @@
   // `base` is <body>'s unscaled top-left; `saved` its inline transform
   // styles, restored when the zoom ends.
   const IDENTITY = { ox: 0, oy: 0, s: 1 };
-  const zoom = { mode: 'none', view: { ...IDENTITY }, goal: { ...IDENTITY }, el: null, base: null, saved: null };
+  const zoom = { mode: 'none', view: { ...IDENTITY }, goal: { ...IDENTITY }, el: null, base: null, saved: null, animating: false };
   let swallowClick = false;      // eat the rest of the click that placed the spotlight
   let swallowTimer = 0;
   let rafId = 0;
@@ -142,17 +152,21 @@
     const root = host.attachShadow({ mode: 'closed' });
     root.innerHTML = `
       <style>
-        .root { position: fixed; inset: 0; pointer-events: none; }
+        .root { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+        /* Much larger than the viewport (clipped by .root) and positioned by
+           transform only; see paintMask(). */
         .mask {
-          position: fixed; inset: 0; pointer-events: none;
+          position: absolute; left: 0; top: 0; pointer-events: none;
+          transform-origin: 0 0; will-change: transform;
           mask-repeat: no-repeat; mask-composite: exclude;
-          opacity: 0; transition: opacity 180ms ease;
         }
-        .ring {
-          position: fixed; left: 0; top: 0; overflow: visible; pointer-events: none;
-          opacity: 0; transition: opacity 180ms ease; will-change: transform;
+        .mask, .ring {
+          /* visibility (after the fade) so a turned-off spotlight costs
+             nothing to draw, backdrop blur included. */
+          opacity: 0; visibility: hidden; transition: opacity 180ms ease, visibility 0s 180ms;
         }
-        .on .mask, .on .ring { opacity: 1; }
+        .ring { position: fixed; left: 0; top: 0; overflow: visible; pointer-events: none; will-change: transform; }
+        .on .mask, .on .ring { opacity: 1; visibility: visible; transition: opacity 180ms ease; }
         /* Dashed outline: hidden while the cursor is outside the spotlight,
            faint inside it, and clearly visible near the edge (where it can be
            grabbed) or while dragging/resizing. White dashes over a dark halo
@@ -260,7 +274,7 @@
     handleEls = [...root.querySelectorAll('.handle')];
     inkCanvas = root.querySelector('.ink');
     inkCtx = inkCanvas.getContext('2d');
-    sizeInk();
+    inkCanvas.width = inkCanvas.height = 0; // sized only while there's ink (sizeInk)
 
     for (const el of [grabRect, root.querySelector('.move'), ...handleEls]) {
       el.addEventListener('pointerdown', onDragStart);
@@ -291,6 +305,7 @@
       drawShape(drawn.w, drawn.h); // pick up shape/softness changes right away
       startLoop();
     }
+    render();
   }
 
   function drawShape(w, h) {
@@ -315,24 +330,50 @@
   }
 
 
-  // Rebuild the hole, outline and handle geometry for the on-screen size.
+  // Bring the hole, outline and handle geometry up to date. Each part is only
+  // rebuilt when its own geometry changed, so this is cheap to call per frame.
   function paint() {
     if (!maskEl || !drawn) return;
+    paintMask(drawn.w, drawn.h);
     const { w, h } = visual();
+    paintRing(w, h);
+  }
+
+  // The hole's mask, built for the spotlight's own (unzoomed) size. The layer
+  // reaches a viewport past the hole on every side, so wherever render()
+  // moves it, it still covers the screen. Moving or zooming is then a
+  // transform the compositor applies; only a size change repaints the mask.
+  function paintMask(w, h) {
+    const key = `${w},${h},${settings.shape},${innerWidth},${innerHeight}`;
+    if (painted?.key === key) return;
     const { rx, ry } = cornerRadii(w, h);
     const soft = SOFT_EDGE;
     const pad = soft * 2;
     const W = w + pad * 2;
     const H = h + pad * 2;
+    const Ew = Math.ceil(2 * innerWidth + W);
+    const Eh = Math.ceil(2 * innerHeight + H);
     const filter = soft
       ? `<filter id="f" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="${soft / 2}"/></filter>`
       : '';
     const svg = `<svg xmlns="${SVG_NS}" width="${W}" height="${H}">${filter}`
       + `<rect x="${pad}" y="${pad}" width="${w}" height="${h}" rx="${rx}" ry="${ry}" fill="#000"${soft ? ' filter="url(#f)"' : ''}/></svg>`;
-    maskEl.style.maskImage = `url("data:image/svg+xml,${encodeURIComponent(svg)}"), linear-gradient(#000, #000)`;
-    maskEl.style.maskSize = `${W}px ${H}px, 100% 100%`;
-    maskSize = { w: W, h: H };
+    const st = maskEl.style;
+    st.width = `${Ew}px`;
+    st.height = `${Eh}px`;
+    st.maskImage = `url("data:image/svg+xml,${encodeURIComponent(svg)}"), linear-gradient(#000, #000)`;
+    st.maskSize = `${W}px ${H}px, 100% 100%`;
+    st.maskPosition = `${(Ew - W) / 2}px ${(Eh - H) / 2}px, 0 0`;
+    painted = { key, w, h, Ew, Eh };
+  }
 
+  // Outline, grab zone and resize handles, at the on-screen size so stroke
+  // widths and handle sizes stay constant while zoomed.
+  function paintRing(w, h) {
+    const key = `${w},${h},${settings.shape}`;
+    if (ringKey === key) return;
+    ringKey = key;
+    const { rx, ry } = cornerRadii(w, h);
     // Outline + grab zone share the shape's geometry.
     ringEl.setAttribute('width', w + RING_MARGIN * 2);
     ringEl.setAttribute('height', h + RING_MARGIN * 2);
@@ -351,28 +392,27 @@
       el.style.left = `${se ? w - inset(rx) : inset(rx)}px`;
       el.style.top = `${se ? h - inset(ry) : inset(ry)}px`;
     }
-    render();
   }
 
   function applyEffect() {
     if (!maskEl) return;
     const t = clamp(settings.intensity, 0, 100) / 100;
     let background;
-    let filter = 'none';
+    blurPx = 0;
     switch (settings.effect) {
       case 'blur':
         background = 'rgba(0, 0, 0, 0.1)';
-        filter = `blur(${(2 + t * 22).toFixed(1)}px)`;
+        blurPx = 2 + t * 22;
         break;
       case 'blur-dim':
         background = `rgba(0, 0, 0, ${(0.15 + t * 0.6).toFixed(2)})`;
-        filter = 'blur(8px)';
+        blurPx = 8;
         break;
       default: // dim
         background = `rgba(0, 0, 0, ${(0.2 + t * 0.75).toFixed(2)})`;
     }
     maskEl.style.background = background;
-    maskEl.style.backdropFilter = filter;
+    render(); // applies the blur
   }
 
   // Signed distance (px) from the cursor to the spotlight's outline:
@@ -403,16 +443,22 @@
   }
 
   function render() {
-    if (!maskEl || !drawn) return;
+    if (!maskEl || !drawn || !painted) return;
     const { x, y, w, h } = visual();
-    maskEl.style.maskPosition = `${x - maskSize.w / 2}px ${y - maskSize.h / 2}px, 0 0`;
+    // Centre the layer (and its hole) on the spotlight; while zooming, scale
+    // it with the page rather than rebuilding the mask every frame.
+    const k = w / painted.w;
+    maskEl.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${k}) translate(${-painted.Ew / 2}px, ${-painted.Eh / 2}px)`;
+    // The backdrop blur scales with the layer, so counter it to keep the
+    // blur constant. Only a compositor property change, no repaint.
+    const filter = blurPx ? `blur(${(blurPx / k).toFixed(2)}px)` : 'none';
+    if (filter !== backdropFilter) maskEl.style.backdropFilter = backdropFilter = filter;
     ringEl.style.transform = `translate3d(${x - w / 2 - RING_MARGIN}px, ${y - h / 2 - RING_MARGIN}px, 0)`;
     handlesEl.style.transform = `translate3d(${x - w / 2}px, ${y - h / 2}px, 0)`;
 
     if (spot.pinned) {
       // Sit above the spotlight, or below it when there's no room at the top.
-      const tw = toolbarEl.offsetWidth;
-      const th = toolbarEl.offsetHeight;
+      const { w: tw, h: th } = toolbarSize;
       // Above the spotlight (clear of the top resize handle), else below it,
       // else tucked just inside its top edge.
       const above = y - h / 2 - TOOLBAR_GAP - th;
@@ -429,6 +475,13 @@
       hudEl.classList.toggle('top', top > innerHeight / 2);
     }
     updateHover();
+  }
+
+  // Reading layout forces Chrome to finish any pending style/layout work for
+  // the whole page, so do it only when the toolbar's size can change: when it
+  // appears, and when its zoom button changes.
+  function measureToolbar() {
+    toolbarSize = { w: toolbarEl.offsetWidth, h: toolbarEl.offsetHeight };
   }
 
   function showHud(text, ms = 1200) {
@@ -478,6 +531,7 @@
     spot.pinned = pinned;
     rootEl.classList.toggle('pinned', pinned);
     if (pinned) {
+      measureToolbar();
       clearTimeout(hudTimer);
       hudEl.classList.remove('show');
       const m = toPage(mouse.x, mouse.y);
@@ -524,7 +578,7 @@
     const fit = Math.min((innerWidth - 2 * ZOOM_MARGIN) / w, (innerHeight - 2 * ZOOM_MARGIN) / h);
     const scale = clamp(Math.max(preferred, Math.min(fit, ZOOM_MIN_GAIN)), 1, Math.min(fit, MAX_ZOOM));
     const zh = h * scale;
-    const toolbarRoom = (toolbarEl?.offsetHeight || 34) + TOOLBAR_GAP + 8;
+    const toolbarRoom = (toolbarSize.h || 34) + TOOLBAR_GAP + 8;
     const to = { x: innerWidth / 2, y: innerHeight / 2 };
     const top = (innerHeight - zh) / 2;
     if (top < toolbarRoom) {
@@ -541,8 +595,15 @@
     const rect = el.getBoundingClientRect(); // unscaled: no transform yet
     zoom.el = el;
     zoom.base = { x: rect.left, y: rect.top };
-    zoom.saved = ['transform', 'transform-origin', 'transition'].map((p) => [p, el.style.getPropertyValue(p), el.style.getPropertyPriority(p)]);
+    zoom.saved = ['transform', 'transform-origin', 'transition', 'will-change'].map((p) => [p, el.style.getPropertyValue(p), el.style.getPropertyPriority(p)]);
     zoom.view = { ...IDENTITY };
+    zoom.animating = false;
+  }
+
+  function restoreZoomStyle(prop) {
+    const [, value, priority] = zoom.saved.find(([p]) => p === prop);
+    if (value) zoom.el.style.setProperty(prop, value, priority);
+    else zoom.el.style.removeProperty(prop);
   }
 
   let peekTimer = 0;
@@ -557,6 +618,7 @@
     zoomBtn.innerHTML = on ? `${ICONS.zoomOut}<span>Zoom out</span>` : ICONS.zoomIn;
     zoomBtn.title = on ? 'Zoom out' : 'Zoom in to the spotlight';
     zoomBtn.classList.toggle('active', on);
+    measureToolbar();
     peekToolbar();
   }
 
@@ -618,7 +680,7 @@
 
     if (!moving && zoom.mode === 'out') {
       endZoom();
-    } else {
+    } else if (moving || zoom.animating) {
       // screen = o + s·v  for page point v, applied to <body> scaled around
       // its own top-left: screen = base + t + s·(v − base)  =>  t = o + (s−1)·base
       const tx = v.ox + (v.s - 1) * zoom.base.x;
@@ -627,6 +689,12 @@
       st.setProperty('transform-origin', '0 0', 'important');
       st.setProperty('transition', 'none', 'important');
       st.setProperty('transform', `translate(${tx}px, ${ty}px) scale(${v.s})`, 'important');
+      // While animating, have the compositor scale the page as one layer
+      // instead of repainting all of it every frame; once settled, drop that
+      // so the page re-renders sharply at its final scale.
+      if (moving) st.setProperty('will-change', 'transform', 'important');
+      else restoreZoomStyle('will-change');
+      zoom.animating = moving;
     }
     paint();
     return moving;
@@ -639,7 +707,7 @@
       if (value) el.style.setProperty(prop, value, priority);
       else el.style.removeProperty(prop);
     }
-    Object.assign(zoom, { mode: 'none', view: { ...IDENTITY }, goal: { ...IDENTITY }, el: null, base: null, saved: null });
+    Object.assign(zoom, { mode: 'none', view: { ...IDENTITY }, goal: { ...IDENTITY }, el: null, base: null, saved: null, animating: false });
     rootEl?.classList.remove('zoomed');
   }
 
@@ -744,7 +812,10 @@
     let moving = false;
     if (zoom.el && stepZoom()) moving = true;
     if (!spot.active) {
-      if (moving) startLoop(); // let a zoom-out finish while fading
+      if (moving) { // let a zoom-out finish while fading
+        render();
+        startLoop();
+      }
       return;
     }
 
@@ -787,8 +858,11 @@
   let inkStroke = null; // the stroke being drawn while ⌥D is held
   let inkRaf = 0;
 
+  // The canvas only has a backing store while there's ink to show: a
+  // full-screen canvas at device resolution is a lot of memory and an extra
+  // layer for Chrome to composite over the page. inkFrame() shrinks it again.
   function sizeInk() {
-    if (!inkCanvas) return;
+    if (!inkCanvas || !inkStrokes.length) return;
     const dpr = window.devicePixelRatio || 1;
     inkCanvas.width = Math.round(innerWidth * dpr);
     inkCanvas.height = Math.round(innerHeight * dpr);
@@ -800,6 +874,7 @@
     ensureOverlay();
     inkStroke = [{ x: mouse.x, y: mouse.y, t: performance.now() }];
     inkStrokes.push(inkStroke);
+    if (!inkCanvas.width) sizeInk();
     startInkLoop();
   }
 
@@ -832,6 +907,9 @@
     inkCtx.strokeStyle = color;
     inkCtx.fillStyle = color;
 
+    // Fully opaque segments go into one path, stroked once at the end; only
+    // fading segments need their own stroke (each has its own alpha).
+    const opaque = new Path2D();
     for (const stroke of inkStrokes) {
       // Drop points that have fully faded (keep one to start the next segment).
       while (stroke.length > 1 && now - stroke[1].t > life) stroke.shift();
@@ -855,19 +933,23 @@
         // Smooth through midpoints with quadratic curves.
         const m0 = i > 1 ? { x: (stroke[i - 2].x + a0.x) / 2, y: (stroke[i - 2].y + a0.y) / 2 } : a0;
         const m1 = { x: (a0.x + a1.x) / 2, y: (a0.y + a1.y) / 2 };
-        inkCtx.globalAlpha = alpha;
-        inkCtx.beginPath();
-        inkCtx.moveTo(m0.x, m0.y);
-        inkCtx.quadraticCurveTo(a0.x, a0.y, m1.x, m1.y);
-        if (i === stroke.length - 1) inkCtx.lineTo(a1.x, a1.y);
-        inkCtx.stroke();
+        const path = alpha < 1 ? new Path2D() : opaque;
+        path.moveTo(m0.x, m0.y);
+        path.quadraticCurveTo(a0.x, a0.y, m1.x, m1.y);
+        if (i === stroke.length - 1) path.lineTo(a1.x, a1.y);
+        if (alpha < 1) {
+          inkCtx.globalAlpha = alpha;
+          inkCtx.stroke(path);
+        }
       }
     }
     inkCtx.globalAlpha = 1;
+    inkCtx.stroke(opaque);
 
     // Forget strokes that have completely faded.
     inkStrokes = inkStrokes.filter((st) => st === inkStroke || now - st[st.length - 1].t <= life);
     if (inkStrokes.length) startInkLoop();
+    else inkCanvas.width = inkCanvas.height = 0; // free the backing store
   }
 
   // ⌥D / Alt+D held: e.code, since Option changes e.key on macOS ("∂").
@@ -925,7 +1007,11 @@
       zoom.goal = { ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale };
     }
     if (zoom.el) startLoop();
-    if (spot.active) paint();
+    if (inkStrokes.length) startInkLoop(); // resizing the canvas cleared it
+    if (spot.active) {
+      paint();
+      render();
+    }
   }
 
   // ------------------------------------------------- extension integration

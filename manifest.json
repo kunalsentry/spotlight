@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Spotlight",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Spotlight part of the page while screen sharing a browser tab (e.g. Google Meet).",
   "permissions": [
     "storage",
