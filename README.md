@@ -23,12 +23,18 @@ After you edit the code, click the reload icon on the extension's card.
 
 ## Using it
 
-1. Press **⌥S** (the only keyboard shortcut; press it again to turn the spotlight off), flip the switch in the popup, or right-click anywhere on the page and click **Spotlight**. The spotlight follows your cursor, starting where you are (or where you right-clicked). While the spotlight is on, the menu item reads **Turn off spotlight**.
+1. Press **⌥S** (press it again to turn the spotlight off), flip the switch in the popup, or right-click anywhere on the page and click **Spotlight**. The spotlight follows your cursor, starting where you are (or where you right-clicked). While the spotlight is on, the menu item reads **Turn off spotlight**.
 2. **Click** to place it. That click only places the spotlight; it doesn't click the page. After that, the page works normally: you can click, type and scroll, inside the spotlight or outside it.
 3. **Drag** the spotlight's edge (the cursor changes to a hand) or the **⠿** handle to move it.
 4. **Resize** it by dragging one of the two white squares, at the top-left and bottom-right of the outline. The opposite corner stays where it is. A circle stays a circle; a box resizes freely. When you let go, the page automatically zooms in to the newly sized area (see Zoom below), unless **After resize** is turned off in the popup; a click on a handle without dragging doesn't. This size is temporary. Going back to following the cursor (⌖) smoothly returns it to the size set in the popup, and the next time you turn the spotlight on it starts at that size.
 5. The toolbar above it has **⌖**, which follows the cursor again, **🔍**, which zooms in, and **✕**, which turns the spotlight off. **⌥S** also turns it off. The toolbar normally sits above or below the spotlight. When there's no room and it has to sit over the spotlight area (for example, when a large spotlight is zoomed), it turns nearly transparent so it doesn't hide what you're showing; hover over it (or tab to it) to show it fully. It also shows fully for a moment when you place the spotlight or the zoom changes.
 6. **Zoom** (the 🔍 button): the page smoothly scales up until the spotlight fills about 80% of the window, so some of the surroundings stay in view. For a large spotlight, where that would barely zoom, it zooms at least 1.25× if that fits, or otherwise as far as it can while keeping the whole spotlight on screen (with a small margin at the window edge). Zoom never crops the spotlight and is capped at 6×. It's centred when the toolbar fits above or below it; otherwise it shifts down just enough to make room for the toolbar, and if even that isn't possible the toolbar sits just inside the spotlight's top edge. If the spotlight already nearly spans the window, zoom can't magnify it without cropping, so it asks you to make the spotlight smaller. The spotlight grows with it, so it frames the same content. The page stays clickable while zoomed, and clicks land on what you see. While zoomed, the toolbar shows a labelled **Zoom out** button, kept apart from ✕ by a divider so you don't turn the spotlight off by mistake. Any spotlight interaction zooms out automatically and then carries on. Grabbing a handle or the edge while zoomed zooms out around the point you grabbed, so it stays under your cursor and the spotlight keeps its size; the page may sit slightly shifted while you drag, then glides back (or zooms in again after a resize, if **After resize** is on). ⌖ follow and changing size or shape in the popup also zoom out first. Clicking the page, or changing the effect or strength, keeps the zoom.
+
+## Disappearing ink
+
+While the spotlight is on, hold **⌥D** (Option+D; Alt+D on Windows) and move the mouse to draw on the page, the way Google Meet's annotations work. With the spotlight off, ⌥D is left alone for the page. You don't need to click, so you can't click the page by accident. Let go of the keys to stop. Each part of a stroke disappears 1.5 seconds after you draw it (it stays for 1 s, then fades over 0.5 s), in the order you drew it. Ink draws over everything, including the dimmed area. Pick its colour under **Ink** in the popup.
+
+On Windows, Chrome uses Alt+D to jump to the address bar, which may take priority over the ink shortcut.
 
 ## Popup options
 
@@ -38,6 +44,7 @@ After you edit the code, click the reload icon on the extension's card.
   - **Blur** blurs it.
   - **Both** applies a fixed blur and darkens it.
 - **Strength:** how dark the dimming is for **Dim** and **Both**, or how strong the blur is for **Blur**.
+- **Ink:** the colour of the disappearing ink: pink, blurple, yellow, lime or white, or any colour from the picker at the end.
 - **Zoom:** two independent on/off toggles for automatic zoom.
   - **On place** (off by default): zoom in as soon as you click to place the spotlight and it stops following the cursor.
   - **After resize** (on by default): zoom in to the new size when you finish resizing with a handle. Resizing while zoomed always zooms out first (around the handle, so it stays under your cursor), so you see the page at normal size while you adjust it. With this off, it stays zoomed out.

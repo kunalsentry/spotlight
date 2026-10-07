@@ -67,6 +67,15 @@
     .seg.toggles { gap: 2px; }
     /* On/off toggles (each independent): solid accent when on. */
     .seg.toggles button[aria-pressed="true"] { background: var(--accent); color: #fff; box-shadow: none; }
+    .swatches { display: flex; align-items: center; gap: 8px; padding: 3px 2px; }
+    .swatches button, .swatches .custom {
+      width: 18px; height: 18px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
+      background: var(--c); box-shadow: inset 0 0 0 1px rgba(0,0,0,.18); position: relative;
+    }
+    .swatches .custom { background: conic-gradient(#fd44b0, #ffdb4a, #c2ef4e, #7553ff, #fd44b0); overflow: hidden; }
+    .swatches .custom input { position: absolute; inset: 0; opacity: 0; cursor: pointer; border: 0; padding: 0; }
+    .swatches [aria-pressed="true"] { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .swatches button:focus-visible, .swatches .custom:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
     .glyph { width: 12px; height: 12px; border: 1.5px solid currentColor; }
     .glyph.circle { border-radius: 50%; }
     .glyph.rounded { width: 15px; border-radius: 3.5px; }
@@ -122,6 +131,17 @@
       <div class="slider"><input type="range" id="intensity" min="0" max="100" step="5"><output id="intensityOut"></output></div>
     </label>
     <div class="row">
+      <span>Ink</span>
+      <div class="swatches" data-setting="inkColor">
+        <button data-value="#fd44b0" style="--c:#fd44b0" aria-label="Pink"></button>
+        <button data-value="#7553ff" style="--c:#7553ff" aria-label="Blurple"></button>
+        <button data-value="#ffdb4a" style="--c:#ffdb4a" aria-label="Yellow"></button>
+        <button data-value="#c2ef4e" style="--c:#c2ef4e" aria-label="Lime"></button>
+        <button data-value="#ffffff" style="--c:#ffffff" aria-label="White"></button>
+        <label class="custom" title="Custom colour"><input type="color" id="inkCustom" aria-label="Custom ink colour"></label>
+      </div>
+    </div>
+    <div class="row">
       <span title="Zoom in automatically">Zoom</span>
       <div class="seg toggles">
         <button data-toggle="autoZoomPlace" title="Zoom in as soon as you click to place the spotlight">On place</button>
@@ -131,7 +151,7 @@
   </div>
 
   <div class="foot">
-    <span><kbd id="toggleKey">⌥S</kbd> on/off · click to place</span>
+    <span><kbd id="toggleKey">⌥S</kbd> spotlight · hold <kbd>⌥D</kbd> to draw</span>
     <a href="#" id="editShortcuts" title="Change keyboard shortcut">Shortcut</a>
   </div>
 

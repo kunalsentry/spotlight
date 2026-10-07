@@ -8,6 +8,7 @@ const DEFAULTS = {
   intensity: 70,
   autoZoomResize: true,
   autoZoomPlace: false,
+  inkColor: '#fd44b0',
 };
 
 const $ = (id) => document.getElementById(id);
@@ -62,12 +63,17 @@ function syncVisibility() {
     setSliderMax('width', circle ? longest : viewport.w);
     setSliderMax('height', viewport.h);
   }
-  for (const group of document.querySelectorAll('.seg[data-setting]')) {
+  for (const group of document.querySelectorAll('[data-setting]')) {
     const key = group.dataset.setting;
     for (const btn of group.querySelectorAll('button')) {
       btn.setAttribute('aria-pressed', String(btn.dataset.value === settings[key]));
     }
   }
+  // A custom ink colour (not one of the swatches) lights up the picker.
+  const custom = $('inkCustom');
+  custom.value = settings.inkColor;
+  const isSwatch = [...document.querySelectorAll('[data-setting="inkColor"] button')].some((b) => b.dataset.value === settings.inkColor);
+  custom.parentElement.setAttribute('aria-pressed', String(!isSwatch));
   // Independent on/off toggles (each button is its own boolean setting).
   for (const btn of document.querySelectorAll('button[data-toggle]')) {
     btn.setAttribute('aria-pressed', String(!!settings[btn.dataset.toggle]));
@@ -94,11 +100,13 @@ async function init() {
     });
   }
 
+  $('inkCustom').addEventListener('input', (e) => save({ inkColor: e.target.value }));
+
   for (const btn of document.querySelectorAll('button[data-toggle]')) {
     btn.addEventListener('click', () => save({ [btn.dataset.toggle]: !settings[btn.dataset.toggle] }));
   }
 
-  for (const group of document.querySelectorAll('.seg[data-setting]')) {
+  for (const group of document.querySelectorAll('[data-setting]')) {
     group.addEventListener('click', (e) => {
       const btn = e.target.closest('button');
       if (btn) save({ [group.dataset.setting]: btn.dataset.value });

@@ -11,6 +11,10 @@
 // usable (scroll, click, type). The toolbar also re-enables following, zooms
 // the page so the spotlit area fills the screen, and closes the spotlight.
 //
+// Disappearing ink: while the spotlight is on, hold Option/Alt+D and move the
+// mouse to draw; strokes disappear 1.5 s after they're drawn (like Google
+// Meet's). They're drawn on a canvas above everything else.
+//
 // Zoom is a CSS transform on <body> (the overlay lives on <html>, so it isn't
 // scaled), animated so the spotlight's centre glides to the middle of the
 // viewport while the page scales up around it.
@@ -32,6 +36,7 @@
     intensity: 70,     // 0..100, meaning depends on the effect
     autoZoomResize: true, // zoom in after resizing a placed spotlight with a handle
     autoZoomPlace: false, // zoom in as soon as the spotlight is placed (stops following)
+    inkColor: '#fd44b0',  // disappearing-ink colour (Sentry hot pink)
   };
   const MIN_SIZE = 60;
   const ROUNDED_RADIUS = 18;
@@ -47,6 +52,9 @@
   const TOOLBAR_GAP = 16;   // px between the spotlight and its toolbar
   const MAX_ZOOM = 6;
   const SVG_NS = 'http://www.w3.org/2000/svg';
+  const INK_WIDTH = 4;         // px
+  const INK_HOLD = 1000;       // ms a stroke segment stays fully visible…
+  const INK_FADE = 500;        // …then fades out: 1.5 s in all
 
   let settings = { ...DEFAULTS };
   const mouse = { x: innerWidth / 2, y: innerHeight / 2 };
@@ -209,6 +217,7 @@
         }
         .toolbar button.zoom.active:hover { background: #6a5fc1; }
 
+        .ink { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
         .hud {
           position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
           font: 500 13px/1 Rubik, system-ui, -apple-system, sans-serif; white-space: nowrap;
@@ -229,6 +238,7 @@
           <div class="handle" data-corner="nw" title="Drag to resize"></div>
           <div class="handle" data-corner="se" title="Drag to resize"></div>
         </div>
+        <canvas class="ink"></canvas>
         <div class="toolbar" role="toolbar" aria-label="Spotlight">
           <button class="move" title="Drag to move">${ICONS.move}</button>
           <button class="follow" title="Follow the cursor again">${ICONS.follow}</button>
@@ -248,6 +258,9 @@
     hudEl = root.querySelector('.hud');
     handlesEl = root.querySelector('.handles');
     handleEls = [...root.querySelectorAll('.handle')];
+    inkCanvas = root.querySelector('.ink');
+    inkCtx = inkCanvas.getContext('2d');
+    sizeInk();
 
     for (const el of [grabRect, root.querySelector('.move'), ...handleEls]) {
       el.addEventListener('pointerdown', onDragStart);
@@ -445,6 +458,7 @@
       startLoop();
     } else {
       endDrag();
+      endInk();
       if (zoom.el) setZoom(false);
       rootEl?.classList.remove('on', 'pinned');
       spot.pinned = false;
@@ -766,6 +780,112 @@
   }
 
 
+  // ------------------------------------------------------- disappearing ink
+
+  let inkCanvas = null;
+  let inkCtx = null;
+  let inkStrokes = []; // each: array of { x, y, t } in screen coordinates
+  let inkStroke = null; // the stroke being drawn while ⌥D is held
+  let inkRaf = 0;
+
+  function sizeInk() {
+    if (!inkCanvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    inkCanvas.width = Math.round(innerWidth * dpr);
+    inkCanvas.height = Math.round(innerHeight * dpr);
+    inkCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function startInk() {
+    if (inkStroke) return;
+    ensureOverlay();
+    inkStroke = [{ x: mouse.x, y: mouse.y, t: performance.now() }];
+    inkStrokes.push(inkStroke);
+    startInkLoop();
+  }
+
+  function endInk() {
+    inkStroke = null;
+  }
+
+  function addInkPoint(x, y) {
+    const last = inkStroke[inkStroke.length - 1];
+    if (Math.hypot(x - last.x, y - last.y) < 1) return;
+    inkStroke.push({ x, y, t: performance.now() });
+    startInkLoop();
+  }
+
+  function startInkLoop() {
+    if (!inkRaf) inkRaf = requestAnimationFrame(inkFrame);
+  }
+
+  // Redraw every live stroke; each segment's opacity comes from its own age,
+  // so a stroke disappears from its start, in the order it was drawn.
+  function inkFrame() {
+    inkRaf = 0;
+    const now = performance.now();
+    const life = INK_HOLD + INK_FADE;
+    inkCtx.clearRect(0, 0, innerWidth, innerHeight);
+    inkCtx.lineCap = 'round';
+    inkCtx.lineJoin = 'round';
+    inkCtx.lineWidth = INK_WIDTH;
+    const color = /^#[0-9a-f]{6}$/i.test(settings.inkColor) ? settings.inkColor : DEFAULTS.inkColor;
+    inkCtx.strokeStyle = color;
+    inkCtx.fillStyle = color;
+
+    for (const stroke of inkStrokes) {
+      // Drop points that have fully faded (keep one to start the next segment).
+      while (stroke.length > 1 && now - stroke[1].t > life) stroke.shift();
+      if (stroke.length === 1) {
+        // A dot (pressed without moving yet).
+        const p = stroke[0];
+        const a = 1 - clamp((now - p.t - INK_HOLD) / INK_FADE, 0, 1);
+        if (a > 0) {
+          inkCtx.globalAlpha = a;
+          inkCtx.beginPath();
+          inkCtx.arc(p.x, p.y, INK_WIDTH / 2, 0, Math.PI * 2);
+          inkCtx.fill();
+        }
+        continue;
+      }
+      for (let i = 1; i < stroke.length; i++) {
+        const a0 = stroke[i - 1];
+        const a1 = stroke[i];
+        const alpha = 1 - clamp((now - a1.t - INK_HOLD) / INK_FADE, 0, 1);
+        if (alpha <= 0) continue;
+        // Smooth through midpoints with quadratic curves.
+        const m0 = i > 1 ? { x: (stroke[i - 2].x + a0.x) / 2, y: (stroke[i - 2].y + a0.y) / 2 } : a0;
+        const m1 = { x: (a0.x + a1.x) / 2, y: (a0.y + a1.y) / 2 };
+        inkCtx.globalAlpha = alpha;
+        inkCtx.beginPath();
+        inkCtx.moveTo(m0.x, m0.y);
+        inkCtx.quadraticCurveTo(a0.x, a0.y, m1.x, m1.y);
+        if (i === stroke.length - 1) inkCtx.lineTo(a1.x, a1.y);
+        inkCtx.stroke();
+      }
+    }
+    inkCtx.globalAlpha = 1;
+
+    // Forget strokes that have completely faded.
+    inkStrokes = inkStrokes.filter((st) => st === inkStroke || now - st[st.length - 1].t <= life);
+    if (inkStrokes.length) startInkLoop();
+  }
+
+  // ⌥D / Alt+D held: e.code, since Option changes e.key on macOS ("∂").
+  const isInkKey = (e) => e.code === 'KeyD' && e.altKey && !e.ctrlKey && !e.metaKey;
+
+  function onKeyDown(e) {
+    // Only while the spotlight is on; otherwise ⌥D belongs to the page.
+    if (!spot.active || !isInkKey(e)) return;
+    e.preventDefault(); // don't type "∂" or trigger the page's own shortcut
+    e.stopImmediatePropagation();
+    if (!e.repeat) startInk();
+  }
+
+  function onKeyUp(e) {
+    if (inkStroke && (e.code === 'KeyD' || e.key === 'Alt')) endInk();
+  }
+
   // ------------------------------------------------------------ page events
 
   const fromOverlay = (e) => !!host && e.composedPath().includes(host);
@@ -773,6 +893,7 @@
   function onMouseMove(e) {
     mouse.x = e.clientX;
     mouse.y = e.clientY;
+    if (inkStroke) addInkPoint(mouse.x, mouse.y);
     if (!spot.active) return;
     if (spot.pinned) updateHover();
     else startLoop();
@@ -799,6 +920,7 @@
   }
 
   function onResize() {
+    sizeInk();
     clampPin();
     if (zoom.mode === 'in') {
       const plan = zoomPlan();
@@ -858,6 +980,9 @@
     [window, 'mouseup', onSwallowable, { capture: true }],
     [window, 'click', onSwallowable, { capture: true }],
     [window, 'resize', onResize, { passive: true }],
+    [window, 'keydown', onKeyDown, { capture: true }],
+    [window, 'keyup', onKeyUp, { capture: true }],
+    [window, 'blur', endInk],
   ];
 
   function teardown() {
@@ -867,6 +992,7 @@
     clearTimeout(hudTimer);
     clearTimeout(swallowTimer);
     clearTimeout(peekTimer);
+    cancelAnimationFrame(inkRaf);
     endZoom();
     host?.remove();
     try {
