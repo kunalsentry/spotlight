@@ -9,8 +9,9 @@
 // Performance: this runs while the tab is being screen-shared, and anything
 // that makes Chrome repaint large areas each frame drops the shared video's
 // frame rate. So the masked layer extends a full viewport past the hole on
-// every side and is moved (and, while zooming, scaled) with a compositor-only
-// transform; the mask itself is only rebuilt when the spotlight's size changes.
+// every side and is moved with a compositor-only transform; the mask itself is
+// only rebuilt when the spotlight's on-screen size changes (in steps, while a
+// zoom animates).
 //
 // Flow: activate -> the spotlight follows the cursor -> click to place it ->
 // drag it by its edge or the toolbar handle; the page underneath stays fully
@@ -57,6 +58,7 @@
   const ZOOM_MARGIN = 12;   // px kept clear between a zoomed spotlight and the window edge
   const TOOLBAR_GAP = 16;   // px between the spotlight and its toolbar
   const MAX_ZOOM = 6;
+  const MASK_RESCALE = 0.02; // while zooming, rebuild the hole after this much size change
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const INK_WIDTH = 4;         // px
   const INK_HOLD = 1000;       // ms a stroke segment stays fully visible…
@@ -334,15 +336,20 @@
   // rebuilt when its own geometry changed, so this is cheap to call per frame.
   function paint() {
     if (!maskEl || !drawn) return;
-    paintMask(drawn.w, drawn.h);
     const { w, h } = visual();
+    // The hole is built at its on-screen size. While a zoom animates, it's
+    // only rebuilt every MASK_RESCALE of size change, and render() scales the
+    // layer by the small remainder. Never scale the layer (far larger than the
+    // screen) up a lot: Chrome then rasters it at that higher resolution, can
+    // run short of tile memory and drop parts of the mask, so the hole flickers.
+    if (!zoom.animating || !painted || Math.abs(w / painted.w - 1) > MASK_RESCALE) paintMask(w, h);
     paintRing(w, h);
   }
 
-  // The hole's mask, built for the spotlight's own (unzoomed) size. The layer
-  // reaches a viewport past the hole on every side, so wherever render()
-  // moves it, it still covers the screen. Moving or zooming is then a
-  // transform the compositor applies; only a size change repaints the mask.
+  // The hole's mask. The layer reaches a viewport past the hole on every side
+  // (plus a margin for the small zoom remainder), so wherever render() moves
+  // it, it still covers the screen. Moving is then a transform the compositor
+  // applies; only a size change repaints the mask.
   function paintMask(w, h) {
     const key = `${w},${h},${settings.shape},${innerWidth},${innerHeight}`;
     if (painted?.key === key) return;
@@ -351,8 +358,8 @@
     const pad = soft * 2;
     const W = w + pad * 2;
     const H = h + pad * 2;
-    const Ew = Math.ceil(2 * innerWidth + W);
-    const Eh = Math.ceil(2 * innerHeight + H);
+    const Ew = Math.ceil(2.1 * innerWidth + W);
+    const Eh = Math.ceil(2.1 * innerHeight + H);
     const filter = soft
       ? `<filter id="f" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="${soft / 2}"/></filter>`
       : '';
@@ -445,11 +452,11 @@
   function render() {
     if (!maskEl || !drawn || !painted) return;
     const { x, y, w, h } = visual();
-    // Centre the layer (and its hole) on the spotlight; while zooming, scale
-    // it with the page rather than rebuilding the mask every frame.
+    // Centre the layer (and its hole) on the spotlight; mid-zoom, scale it by
+    // the small remainder since the hole was last rebuilt (see paint()).
     const k = w / painted.w;
     maskEl.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${k}) translate(${-painted.Ew / 2}px, ${-painted.Eh / 2}px)`;
-    // The backdrop blur scales with the layer, so counter it to keep the
+    // The backdrop blur scales with the layer, so counter that to keep the
     // blur constant. Only a compositor property change, no repaint.
     const filter = blurPx ? `blur(${(blurPx / k).toFixed(2)}px)` : 'none';
     if (filter !== backdropFilter) maskEl.style.backdropFilter = backdropFilter = filter;
