@@ -11,9 +11,9 @@
 // usable (scroll, click, type). The toolbar also re-enables following, zooms
 // the page so the spotlit area fills the screen, and closes the spotlight.
 //
-// Disappearing ink: while the spotlight is on, hold Option/Alt+D and move the
-// mouse to draw; strokes disappear 1.5 s after they're drawn (like Google
-// Meet's). They're drawn on a canvas above everything else.
+// Disappearing ink: hold Option/Alt+D and move the mouse to draw, whether or
+// not the spotlight is on; strokes disappear 1.5 s after they're drawn (like
+// Google Meet's). They're drawn on a canvas above everything else.
 //
 // Zoom is a CSS transform on <body> (the overlay lives on <html>, so it isn't
 // scaled), animated so the spotlight's centre glides to the middle of the
@@ -458,7 +458,6 @@
       startLoop();
     } else {
       endDrag();
-      endInk();
       if (zoom.el) setZoom(false);
       rootEl?.classList.remove('on', 'pinned');
       spot.pinned = false;
@@ -875,8 +874,7 @@
   const isInkKey = (e) => e.code === 'KeyD' && e.altKey && !e.ctrlKey && !e.metaKey;
 
   function onKeyDown(e) {
-    // Only while the spotlight is on; otherwise ⌥D belongs to the page.
-    if (!spot.active || !isInkKey(e)) return;
+    if (!isInkKey(e)) return;
     e.preventDefault(); // don't type "∂" or trigger the page's own shortcut
     e.stopImmediatePropagation();
     if (!e.repeat) startInk();

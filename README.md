@@ -32,7 +32,7 @@ After you edit the code, click the reload icon on the extension's card.
 
 ## Disappearing ink
 
-While the spotlight is on, hold **⌥D** (Option+D; Alt+D on Windows) and move the mouse to draw on the page, the way Google Meet's annotations work. With the spotlight off, ⌥D is left alone for the page. You don't need to click, so you can't click the page by accident. Let go of the keys to stop. Each part of a stroke disappears 1.5 seconds after you draw it (it stays for 1 s, then fades over 0.5 s), in the order you drew it. Ink draws over everything, including the dimmed area. Pick its colour under **Ink** in the popup.
+Hold **⌥D** (Option+D; Alt+D on Windows) and move the mouse to draw on the page, the way Google Meet's annotations work. It works whether or not the spotlight is on. You don't need to click, so you can't click the page by accident. Let go of the keys to stop. Each part of a stroke disappears 1.5 seconds after you draw it (it stays for 1 s, then fades over 0.5 s), in the order you drew it. Ink draws over everything, including the dimmed area. Pick its colour under **Ink** in the popup.
 
 On Windows, Chrome uses Alt+D to jump to the address bar, which may take priority over the ink shortcut.
 
