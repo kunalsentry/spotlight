@@ -20,11 +20,12 @@
 //   center   fixed size, `offset` from the anchor's centre
 // A cue whose two axes both stretch simply fits its anchor, plus padding.
 //
-// Optionally a cue also ends its spotlight (cue.deactivate):
+// A cue also ends its spotlight (cue.deactivate):
+//   { on: 'outside' }                               a click outside the spotlight (the default)
 //   { on: 'element', element: Fingerprint, name }  a click on that element
-//   { on: 'outside' }                               a click outside the spotlight
 //   { on: 'timer', ms }                             after a delay
-// Otherwise (null) it ends like any spotlight: ✕ or ⌥S.
+//   null                                            only like any spotlight: ✕ or ⌥S
+// A cue saved without the field (older cues) gets the default.
 
 (() => {
   'use strict';
@@ -51,6 +52,8 @@
   let armed = false;
   let run = null;      // the cue being carried out: { cue, timer, ... }
   let shown = null;    // the cue whose spotlight is on now: { cue, timer }
+  const DEFAULT_END = { on: 'outside' };
+  const endOf = (cue) => (cue.deactivate === undefined ? DEFAULT_END : cue.deactivate);
   let rec = null;      // recording state: { step, trigger, name, page }
   let ui = null;       // recording bar and picker highlight
 
@@ -378,7 +381,7 @@
   function setShown(cue) {
     clearShown();
     shown = { cue, timer: 0 };
-    const end = cue.deactivate;
+    const end = endOf(cue);
     if (end?.on === 'timer' && end.ms > 0) {
       const mine = shown;
       shown.timer = setTimeout(() => { if (shown === mine) api.setSpotlight(false); }, end.ms);
@@ -394,13 +397,16 @@
   // Whether this click ends the cue that's showing. Overlay clicks (toolbar,
   // handles, edge) never do.
   function endsCue(e) {
-    const end = shown?.cue.deactivate;
+    const end = shown && endOf(shown.cue);
     if (!end || api.isOverlay(e)) return false;
     if (end.on === 'element') {
       const el = end.element && resolve(end.element);
       return !!el && el.contains(e.target);
     }
     if (end.on === 'outside') {
+      // A click on a scrollbar (outside the page's client area) isn't one.
+      const doc = document.documentElement;
+      if (e.clientX >= doc.clientWidth || e.clientY >= doc.clientHeight) return false;
       const s = api.getSpot();
       const { ox, oy, s: k } = api.view();
       const x = ox + k * s.x;
@@ -704,6 +710,7 @@
         scroll: true,
         timeoutMs: DEFAULT_TIMEOUT,
       },
+      deactivate: { ...DEFAULT_END },
       createdAt: Date.now(),
     };
     const { cues: stored = [] } = await chrome.storage.local.get('cues');

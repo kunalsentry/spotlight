@@ -276,13 +276,14 @@ const CueEditor = (() => {
 
     function renderEnds() {
       ends.textContent = '';
-      const end = cue.deactivate;
+      // No field (older cues) means the default: a click outside.
+      const end = cue.deactivate === undefined ? { on: 'outside' } : cue.deactivate;
       const mode = el('select', { ariaLabel: 'How the spotlight ends' });
       const modes = [
-        ['', 'Manually (✕ or ⌥S)'],
+        ['outside', 'Click outside the spotlight (default)'],
         ['element', 'Click on an element'],
-        ['outside', 'Click outside the spotlight'],
         ['timer', 'After a delay'],
+        ['', 'Manually only (✕ or ⌥S)'],
       ];
       for (const [value, text] of modes) mode.append(el('option', { value, textContent: text, selected: (end?.on ?? '') === value }));
       mode.addEventListener('change', async () => {
