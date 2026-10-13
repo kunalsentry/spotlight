@@ -48,7 +48,7 @@ On Windows, Chrome uses Alt+D to jump to the address bar, which may take priorit
 - **Zoom:** two independent on/off toggles for automatic zoom.
   - **On place** (off by default): zoom in as soon as you click to place the spotlight and it stops following the cursor.
   - **After resize** (on by default): zoom in to the new size when you finish resizing with a handle. Resizing while zoomed always zooms out first (around the handle, so it stays under your cursor), so you see the page at normal size while you adjust it. With this off, it stays zoomed out.
-- **Instant Zoom** (off by default): press the shortcut to place the spotlight where the cursor is and zoom in straight away, with no click to place and no on-page toolbar. Press it again to zoom back out; the keyboard shortcut is the only control. Turns off the two automatic-zoom options above while it's on.
+- **Instant Zoom** (off by default): press the shortcut to place the spotlight where the cursor is and zoom in straight away, without a click to place. Press it again to zoom back out. Turns off the two automatic-zoom options above while it's on.
 
 All settings apply live and are remembered. If you saved a shape or effect that this version no longer offers, it switches to the nearest one: Ellipse becomes Circle, Rectangle becomes Box, and Black out or Grayscale become Dim.
 

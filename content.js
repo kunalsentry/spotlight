@@ -208,8 +208,6 @@
           pointer-events: auto; will-change: transform;
         }
         .on.pinned .toolbar { display: flex; }
-        .instant .toolbar, .instant .handles { display: none !important; }
-        .instant .ring .grab { pointer-events: none; }
         /* When the toolbar has to sit over the spotlight area ("inset"), it
            goes nearly transparent so it doesn't hide what's being shown;
            fully visible on hover/keyboard focus, and briefly ("peek") when it
@@ -295,15 +293,6 @@
     document.documentElement.appendChild(host);
     applyShape();
     applyEffect();
-    syncInstant();
-  }
-
-  function syncInstant() {
-    if (!rootEl) return;
-    const on = !!settings.instantZoom;
-    rootEl.classList.toggle('instant', on);
-    toolbarEl.style.display = on ? 'none' : '';
-    handlesEl.style.display = on ? 'none' : '';
   }
 
   // The hole: an SVG of the shape (black on transparent), feathered with a
@@ -602,7 +591,7 @@
     const fit = Math.min((innerWidth - 2 * ZOOM_MARGIN) / w, (innerHeight - 2 * ZOOM_MARGIN) / h);
     const scale = clamp(Math.max(preferred, Math.min(fit, ZOOM_MIN_GAIN)), 1, Math.min(fit, MAX_ZOOM));
     const zh = h * scale;
-    const toolbarRoom = settings.instantZoom ? 0 : (toolbarSize.h || 34) + TOOLBAR_GAP + 8;
+    const toolbarRoom = (toolbarSize.h || 34) + TOOLBAR_GAP + 8;
     const to = { x: innerWidth / 2, y: innerHeight / 2 };
     const top = (innerHeight - zh) / 2;
     if (top < toolbarRoom) {
@@ -688,7 +677,7 @@
       zoom.goal = clampGoal({ ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale });
       zoom.mode = 'in';
       rootEl.classList.add('zoomed');
-      if (!settings.instantZoom) showHud(`Zoomed to ${Math.round(plan.scale * 100)}%`, 1400);
+      showHud(`Zoomed to ${Math.round(plan.scale * 100)}%`, 1400);
     } else {
       if (!zoom.el || zoom.mode === 'out') return false;
       zoom.goal = { ...IDENTITY };
@@ -1101,7 +1090,6 @@
     }
     applyShape();
     applyEffect();
-    syncInstant();
   }
 
   const listeners = [
@@ -1146,6 +1134,5 @@
     normalizeSettings();
     applyShape();
     applyEffect();
-    syncInstant();
   }).catch(() => {});
 })();
