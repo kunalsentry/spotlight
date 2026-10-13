@@ -84,6 +84,28 @@
     .slider output { text-align: right; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
     input[type="range"] { width: 100%; margin: 0; accent-color: var(--accent); }
 
+    .cues { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
+    .cues .top h2 { font-size: 13px; margin: 0; font-weight: 600; }
+    .btn {
+      font: inherit; font-size: 12px; color: var(--fg); background: var(--chip); border: 0; border-radius: 6px;
+      padding: 4px 9px; cursor: pointer;
+    }
+    .btn:hover { color: var(--accent); }
+    .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .btn.primary { background: var(--accent); color: #fff; }
+    .btn.primary:hover { color: #fff; filter: brightness(1.1); }
+    .cue-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+    .cue-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+    .cue-list li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cue-list li.off span { color: var(--muted); text-decoration: line-through; }
+    .cue-list .empty { color: var(--muted); }
+    .cue-actions { display: flex; gap: 6px; align-items: center; }
+    .cue-actions a { margin-left: auto; font-size: 11.5px; color: var(--muted); text-decoration: none; }
+    .cue-actions a:hover { color: var(--fg); }
+    .seg.sizes button { font-variant-numeric: tabular-nums; }
+    #viewport { font-size: 11px; color: var(--muted); }
+    body.unavailable .cues .page-only { opacity: .4; pointer-events: none; }
+
     .foot {
       margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line);
       display: flex; justify-content: space-between; align-items: center; font-size: 11.5px; color: var(--muted);
@@ -148,6 +170,31 @@
         <button data-toggle="autoZoomResize" title="Zoom in when you finish resizing the spotlight">After resize</button>
       </div>
     </div>
+  </div>
+
+  <div class="cues">
+    <div class="top">
+      <div>
+        <h2>Cues</h2>
+        <small id="cuesStatus">Off · <kbd id="cuesKey">⌥⇧S</kbd> to arm</small>
+      </div>
+      <label class="switch"><input type="checkbox" id="cuesArmed" aria-label="Arm cues"><span></span></label>
+    </div>
+    <ul class="cue-list page-only" id="cueList"><li class="empty">No cues on this page</li></ul>
+    <div class="cue-actions">
+      <button class="btn primary page-only" id="recordCue" title="Click an element, then place the spotlight it should show">Record cue</button>
+      <a href="#" id="manageCues">Manage cues</a>
+    </div>
+    <div class="row page-only" title="Resize this window to check how cues adapt">
+      <span>Test at</span>
+      <div class="seg sizes" id="sizes">
+        <button data-size="1280x800" title="1280 × 800 window">1280</button>
+        <button data-size="1440x900" title="1440 × 900 window">1440</button>
+        <button data-size="1920x1080" title="1920 × 1080 window">1920</button>
+        <button data-size="restore" id="restoreSize" title="Back to the original window size" hidden>↺</button>
+      </div>
+    </div>
+    <div id="viewport"></div>
   </div>
 
   <div class="foot">

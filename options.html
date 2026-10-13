@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spotlight cues</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #362d59;
+      --muted: #79628c;
+      --line: #ececf1;
+      --chip: #f6f6f8;
+      --card: #ffffff;
+      --accent: #7553ff;
+      --danger: #c73852;
+      --cue: #fd44b0;
+      color-scheme: light dark;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #181225;
+        --fg: #ffffff;
+        --muted: #9093c1;
+        --line: #362d59;
+        --chip: #2a2142;
+        --card: #1f1633;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 32px 16px 64px; background: var(--bg); color: var(--fg);
+      font: 14px/1.45 Rubik, system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    main { max-width: 760px; margin: 0 auto; }
+    header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+    h1 { font-size: 22px; margin: 0; }
+    header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; max-width: 480px; }
+    .actions { display: flex; gap: 8px; }
+    button, .file {
+      font: inherit; font-size: 13px; color: var(--fg); background: var(--chip); border: 0; border-radius: 7px;
+      padding: 6px 12px; cursor: pointer;
+    }
+    button:hover, .file:hover { color: var(--accent); }
+    button:focus-visible, .file:focus-within, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    button.danger:hover { color: #fff; background: var(--danger); }
+    .file input { display: none; }
+
+    h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 26px 0 8px; text-transform: none; }
+    .cue {
+      background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 10px;
+      display: grid; gap: 10px;
+    }
+    .cue.off { opacity: 0.6; }
+    .cue-head { display: flex; align-items: center; gap: 10px; }
+    .cue-head input[type="text"] { flex: 1; font-weight: 600; }
+    input[type="text"] {
+      font: inherit; color: var(--fg); background: var(--chip); border: 1px solid transparent; border-radius: 6px;
+      padding: 5px 8px; width: 100%; min-width: 0;
+    }
+    input[type="text"].invalid { border-color: var(--danger); }
+    .grid { display: grid; grid-template-columns: 90px 1fr; gap: 6px 12px; align-items: center; font-size: 13px; }
+    .grid > span { color: var(--muted); }
+    .url { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 6px; }
+    .detail { font-size: 12.5px; }
+    .detail code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--chip); padding: 1px 5px; border-radius: 4px; }
+    .toggles { display: flex; gap: 16px; flex-wrap: wrap; }
+    label.check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+    input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+    .error { color: var(--danger); font-size: 12px; }
+    .empty { color: var(--muted); padding: 40px 0; text-align: center; border: 1px dashed var(--line); border-radius: 10px; }
+    .hint { color: var(--muted); font-size: 12px; }
+
+    @media (max-width: 560px) {
+      .grid { grid-template-columns: 1fr; }
+      .grid > span { margin-top: 4px; }
+      .url { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Cues</h1>
+        <p>A cue turns the spotlight on when you click a specific element on matching pages, while cues are armed. Record cues from the Spotlight popup.</p>
+      </div>
+      <div class="actions">
+        <label class="file" title="Add cues from a JSON file">Import<input type="file" id="import" accept="application/json,.json"></label>
+        <button id="export" title="Save all cues as a JSON file">Export</button>
+      </div>
+    </header>
+    <div id="message" class="hint" role="status"></div>
+    <div id="list"></div>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>

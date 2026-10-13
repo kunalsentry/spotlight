@@ -9,7 +9,9 @@ A Manifest V3 Chrome extension that spotlights part of a web page while you pres
 | `manifest.json` | MV3 manifest: permissions, the toggle shortcut, the content script, and the popup |
 | `background.js` | Service worker. Sends the shortcut, right-click menu and popup actions to the active tab, injects the content script into tabs that were already open, and keeps the **ON** badge and the menu item's label up to date |
 | `content.js` | The spotlight: overlay, effects, cursor following, placing, dragging, and the on-page toolbar |
-| `popup.html` / `popup.js` | On/off switch, shape, size, effect, and strength controls |
+| `cues.js` | Cues: recording, finding elements again, matching pages, and placing the spotlight when a cue's trigger is clicked |
+| `popup.html` / `popup.js` | On/off switch, shape, size, effect, and strength controls, plus arming, recording and testing cues |
+| `options.html` / `options.js` | The cue manager: edit, enable, delete, import and export cues |
 | `icons/` | Toolbar and extension icons |
 
 ## Load it in Chrome
@@ -35,6 +37,29 @@ After you edit the code, click the reload icon on the extension's card.
 Hold **⌥D** (Option+D; Alt+D on Windows) and move the mouse to draw on the page, the way Google Meet's annotations work. It works whether or not the spotlight is on. You don't need to click, so you can't click the page by accident. Let go of the keys to stop. Each part of a stroke disappears 1.5 seconds after you draw it (it stays for 1 s, then fades over 0.5 s), in the order you drew it. Ink draws over everything, including the dimmed area. Pick its colour under **Ink** in the popup.
 
 On Windows, Chrome uses Alt+D to jump to the address bar, which may take priority over the ink shortcut.
+
+## Cues
+
+A cue turns the spotlight on by itself when you click a specific element on certain pages: for example, clicking **Open trace** on any issue spotlights the trace waterfall, already sized and optionally zoomed. Cues only run while they're **armed**.
+
+- **Arm:** flip the switch under **Cues** in the popup, or press **⌥⇧S** (Alt+Shift+S). The toolbar badge reads **CUE** while armed (**ON** still wins while a spotlight is on). Every browser session starts unarmed, so cues never fire when you aren't presenting.
+- **Record:** open the popup on the page and click **Record cue**.
+  1. Click the element that should trigger the cue. A pink outline shows what will be picked, and the click goes through to the page, so whatever it opens appears.
+  2. The spotlight turns on as a box. Click to place it, then drag and resize it as usual. Zoom in with 🔍 if the cue should zoom. What you see is what's saved.
+  3. Click **Save cue** or press Enter (Esc cancels).
+- **When a cue fires,** the spotlight is placed exactly as if you had placed it by hand, with the cue's size, shape and zoom instead of the popup's. Everything else works as usual: drag, resize, ⌖ (back to the popup's size and shape), 🔍, ✕ and ⌥S. The effect and strength come from the popup.
+- **Test:** the popup lists this page's cues with a **Test** button each, and **Test at** resizes the window to 1280, 1440 or 1920 pixels wide (↺ restores it) so you can check how a cue adapts.
+- **Manage:** **Manage cues** opens a page where you can rename, enable or disable, and delete cues, edit their page patterns, toggle zoom and scrolling, and import or export them as JSON to share with others.
+
+### How cues find things again
+
+- **Pages:** a cue is saved with a URL pattern made from the page you recorded it on. Parts that look like ids or slugs become wildcards, so `/organizations/acme/issues/12345/` becomes `/organizations/:org/issues/:id/` and matches every issue in every org. `:name` matches one path segment and `*` matches anything. The query string and `#hash` are ignored, and a trailing slash is optional.
+- **The trigger:** a cue remembers several ways to find the element: its test id (`data-test-id` and similar), a stable `id`, its role and visible name, and its position in the page. It keeps only the ways that picked out exactly that one element when recorded, and later uses the first one that still does. Generated class names and ids are never used.
+- **The spotlight's area** is stored relative to an element, not as a position on screen, so it adapts to other window sizes. If the spotlight you drew fits an element (each edge within 24 px), the cue fits that element plus the same padding, wherever it is and however big it gets. Otherwise it's stored inside the smallest element that contains it, with each edge either following that element's edge or keeping a fixed size, depending on where you drew it. If no element can be found again, it's placed relative to the window.
+- **Timing:** after the click, the cue waits up to 3 seconds for its element to appear and stop moving (a drawer sliding in, say), scrolls it into view if needed, then places the spotlight. If the element isn't there, is hidden at this window size, or is off-screen, it shows a message instead of spotlighting the wrong thing.
+- **Clicks that load a new page** finish on the new page (same site, within 10 seconds).
+
+Cue limitations: only clicks trigger cues; synthetic clicks made by page scripts are ignored; elements inside iframes or other sites' shadow DOM can't be triggers or anchors; and a layout that changes completely at some window size can leave a cue without its element.
 
 ## Popup options
 

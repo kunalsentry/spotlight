@@ -128,6 +128,79 @@ async function init() {
   });
 
   renderState(await sendToTab({ action: 'getState' }));
+  initCues(commands.find((c) => c.name === 'toggle-cues'));
+}
+
+// ------------------------------------------------------------------ cues
+
+async function renderCues() {
+  const info = await sendToTab({ action: 'pageCues' });
+  const list = $('cueList');
+  list.textContent = '';
+  if (!info?.cues?.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = info ? 'No cues on this page' : 'Cues aren’t available here';
+    list.append(li);
+    return;
+  }
+  for (const cue of info.cues) {
+    const li = document.createElement('li');
+    li.classList.toggle('off', !cue.enabled);
+    const name = document.createElement('span');
+    name.textContent = cue.name;
+    name.title = cue.name;
+    const test = document.createElement('button');
+    test.className = 'btn';
+    test.textContent = 'Test';
+    test.title = 'Show this cue’s spotlight now';
+    test.addEventListener('click', async () => {
+      await sendToTab({ action: 'testCue', id: cue.id });
+      window.close();
+    });
+    li.append(name, test);
+    list.append(li);
+  }
+}
+
+function renderArmed(armed, key) {
+  $('cuesArmed').checked = armed;
+  $('cuesStatus').innerHTML = '';
+  const kbd = document.createElement('kbd');
+  kbd.textContent = key || 'no shortcut';
+  $('cuesStatus').append(armed ? 'Armed · ' : 'Off · ', kbd, armed ? ' to disarm' : ' to arm');
+}
+
+async function renderViewport() {
+  const state = await sendToTab({ action: 'getState' });
+  $('viewport').textContent = state?.viewport ? `Page area ${state.viewport.w} × ${state.viewport.h}` : '';
+  const win = await chrome.windows.getCurrent();
+  $('restoreSize').hidden = !(await chrome.runtime.sendMessage({ type: 'hasSavedBounds', windowId: win.id }));
+}
+
+async function initCues(cuesCommand) {
+  const key = cuesCommand?.shortcut;
+  renderArmed(await chrome.runtime.sendMessage({ type: 'getCuesArmed' }), key);
+  $('cuesArmed').addEventListener('change', async (e) => {
+    renderArmed(await chrome.runtime.sendMessage({ type: 'setCuesArmed', value: e.target.checked }), key);
+  });
+  $('recordCue').addEventListener('click', async () => {
+    await sendToTab({ action: 'recordCue' });
+    window.close();
+  });
+  $('manageCues').addEventListener('click', (e) => {
+    e.preventDefault();
+    chrome.runtime.openOptionsPage();
+  });
+  $('sizes').addEventListener('click', async (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    const win = await chrome.windows.getCurrent();
+    await chrome.runtime.sendMessage({ type: 'resizeWindow', windowId: win.id, size: btn.dataset.size });
+    setTimeout(renderViewport, 200); // the page reports its new size after its resize event
+  });
+  renderCues();
+  renderViewport();
 }
 
 init();
