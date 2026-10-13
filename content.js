@@ -602,24 +602,33 @@
     return { scale, to };
   }
 
-  // Keep the scaled page covering the viewport: clamp the pan so the page's
-  // edges never come inside the window. If the page can't fill the window at
-  // this scale, centre it instead.
-  function clampGoal(goal) {
+  // Keep the spotlit box fully inside the window. Where that doesn't pull the
+  // box off-screen, pan no further than needed so the page still covers the
+  // window; otherwise prefer keeping the box visible.
+  function boxGoal(goal, bw, bh) {
     const s = goal.s;
     const de = document.documentElement;
     const docW = zoom.docW ?? Math.max(innerWidth, de.scrollWidth);
     const docH = zoom.docH ?? Math.max(innerHeight, de.scrollHeight);
     const sx = window.scrollX || 0;
     const sy = window.scrollY || 0;
-    const minOx = innerWidth - s * (docW - sx);
-    const maxOx = s * sx;
-    const minOy = innerHeight - s * (docH - sy);
-    const maxOy = s * sy;
+    const pageMinOx = innerWidth - s * (docW - sx);
+    const pageMaxOx = s * sx;
+    const pageMinOy = innerHeight - s * (docH - sy);
+    const pageMaxOy = s * sy;
+    const boxMinOx = ZOOM_MARGIN + (bw * s) / 2 - s * spot.pinX;
+    const boxMaxOx = innerWidth - ZOOM_MARGIN - (bw * s) / 2 - s * spot.pinX;
+    const boxMinOy = ZOOM_MARGIN + (bh * s) / 2 - s * spot.pinY;
+    const boxMaxOy = innerHeight - ZOOM_MARGIN - (bh * s) / 2 - s * spot.pinY;
+    const axis = (v, pageLo, pageHi, boxLo, boxHi) => {
+      const lo = Math.max(pageLo, boxLo);
+      const hi = Math.min(pageHi, boxHi);
+      return lo <= hi ? clamp(v, lo, hi) : v;
+    };
     return {
       s,
-      ox: minOx > maxOx ? (innerWidth - s * docW) / 2 : clamp(goal.ox, minOx, maxOx),
-      oy: minOy > maxOy ? (innerHeight - s * docH) / 2 : clamp(goal.oy, minOy, maxOy),
+      ox: axis(goal.ox, pageMinOx, pageMaxOx, boxMinOx, boxMaxOx),
+      oy: axis(goal.oy, pageMinOy, pageMaxOy, boxMinOy, boxMaxOy),
     };
   }
 
@@ -674,7 +683,8 @@
       endDrag();
       beginZoom();
       // Spotlight centre (page coords) -> plan.to on screen, at plan.scale.
-      zoom.goal = clampGoal({ ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale });
+      const { w, h } = drawn ?? shapeSize();
+      zoom.goal = boxGoal({ ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale }, w, h);
       zoom.mode = 'in';
       rootEl.classList.add('zoomed');
       showHud(`Zoomed to ${Math.round(plan.scale * 100)}%`, 1400);
@@ -1042,7 +1052,8 @@
     clampPin();
     if (zoom.mode === 'in') {
       const plan = zoomPlan();
-      zoom.goal = clampGoal({ ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale });
+      const { w, h } = drawn ?? shapeSize();
+      zoom.goal = boxGoal({ ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale }, w, h);
     }
     if (zoom.el) startLoop();
     if (inkStrokes.length) startInkLoop(); // resizing the canvas cleared it
