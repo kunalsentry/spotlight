@@ -451,8 +451,9 @@
   function syncUi() {
     if (!rec) return;
     ensureUi();
-    if (rec.step === 'trigger' || rec.step === 'pick-end') {
-      ui.msg.textContent = rec.step === 'trigger' ? 'Recording a cue: click the element that triggers it' : 'Click the element that ends this cue';
+    if (picking()) {
+      ui.msg.textContent = rec.step === 'trigger' ? 'Recording a cue: click the element that triggers it'
+        : rec.what === 'trigger' ? 'Click the element that should trigger this cue' : 'Click the element that ends this cue';
       ui.hint.textContent = rec.step === 'trigger' ? 'Esc to cancel' : `${rec.name} · Esc to cancel`;
       ui.save.hidden = true;
     } else {
@@ -474,6 +475,10 @@
     syncUi();
   }
 
+  // Choosing an element: a new cue's trigger, or (step 'pick') a new trigger
+  // or end element for an existing cue.
+  const picking = () => rec?.step === 'trigger' || rec?.step === 'pick';
+
   // The element to treat as the trigger: the interactive element around the
   // click target, or the target itself.
   const triggerElement = (target) => target.closest(INTERACTIVE) || target;
@@ -483,7 +488,7 @@
     const low = ui.bar.classList.contains('low');
     if (!low && e.clientY < 90) ui.bar.classList.add('low');
     else if (low && e.clientY > innerHeight - 150) ui.bar.classList.remove('low');
-    if (rec.step !== 'trigger') return;
+    if (!picking()) return;
     if (!(e.target instanceof Element) || api.isOverlay(e)) {
       ui.pick.style.display = 'none';
       return;
@@ -495,7 +500,7 @@
   }
 
   function onRecordClick(e) {
-    if ((rec.step !== 'trigger' && rec.step !== 'pick-end') || !(e.target instanceof Element)) return;
+    if (!picking() || !(e.target instanceof Element)) return;
     const el = triggerElement(e.target);
     const fp = fingerprint(el);
     if (!fp.length) {
@@ -505,12 +510,21 @@
       api.showHud('Can’t identify that element. Try a nearby one.', 2200);
       return;
     }
-    if (rec.step === 'pick-end') {
-      // The click goes through too (it's usually a Close button).
+    if (rec.step === 'pick') {
+      // The click goes through here too (to open what the trigger opens, or
+      // because an end element is usually a Close button).
       const name = describe(el);
-      const id = rec.cueId;
-      updateStoredCue(id, (c) => { c.deactivate = { on: 'element', element: fp, name }; })
-        .then(() => endRecording(`Cue now ends on a click on “${name}”`));
+      const { cueId, what } = rec;
+      updateStoredCue(cueId, (c) => {
+        if (what === 'end') {
+          c.deactivate = { on: 'element', element: fp, name };
+          return;
+        }
+        // A name still made from the old trigger follows the new one.
+        const oldName = c.trigger.name || c.trigger.element.find((st) => st.name)?.name || '';
+        if (c.name === `Click “${oldName.slice(0, 40)}”`) c.name = `Click “${name.slice(0, 40)}”`;
+        c.trigger = { ...c.trigger, element: fp, name };
+      }).then(() => endRecording(what === 'end' ? `Cue now ends on a click on “${name}”` : `Cue now triggered by “${name}”`));
       return;
     }
     // The click goes through, so the page shows whatever it opens.
@@ -528,11 +542,23 @@
     }
   }
 
-  function startPickEnd(cue) {
+  function startPick(cue, what) {
     stopRun();
     api.setSpotlight(false);
-    rec = { step: 'pick-end', cueId: cue.id, name: cue.name };
+    rec = { step: 'pick', what, cueId: cue.id, name: cue.name };
     syncUi();
+  }
+
+  // Briefly outline an element on the page (the cue editor's Check button).
+  function flash(el) {
+    const box = document.createElement('div');
+    const r = el.getBoundingClientRect();
+    box.style.cssText = `position:fixed;left:${r.left - 3}px;top:${r.top - 3}px;width:${r.width + 6}px;height:${r.height + 6}px;`
+      + 'box-sizing:border-box;border:2px solid #fd44b0;border-radius:5px;background:rgba(253,68,176,.12);pointer-events:none;'
+      + 'transition:opacity 400ms ease 1200ms;';
+    api.mount(box);
+    requestAnimationFrame(() => requestAnimationFrame(() => { box.style.opacity = '0'; }));
+    setTimeout(() => box.remove(), 1700);
   }
 
   // Place and size an existing cue's spotlight again: straight to the
@@ -566,7 +592,7 @@
       name: `Click “${rec.name.slice(0, 40)}”`,
       enabled: true,
       page: rec.page,
-      trigger: { event: 'click', element: rec.trigger },
+      trigger: { event: 'click', element: rec.trigger, name: rec.name },
       spotlight: {
         anchor: anchor?.fp ?? null,
         anchorName: anchor ? describe(anchor.el) : null,
@@ -664,10 +690,19 @@
         sendResponse(!cue ? null : !cue.spotlight.anchor ? { w: innerWidth, h: innerHeight } : box?.width ? { w: box.width / k, h: box.height / k } : null);
         return;
       }
-      case 'pickCueEnd': {
+      case 'pickCueElement': { // msg.what: 'trigger' | 'end'
         const cue = cues.find((c) => c.id === msg.id);
-        if (cue) startPickEnd(cue);
+        if (cue) startPick(cue, msg.what === 'end' ? 'end' : 'trigger');
         sendResponse({ ok: !!cue });
+        return;
+      }
+      case 'checkElement': {
+        // How many elements each strategy finds now, and which one the
+        // fingerprint resolves to (outlined on the page).
+        const counts = (msg.element || []).map((st) => query(st).length);
+        const el = resolve(msg.element);
+        if (el) flash(el);
+        sendResponse({ counts, found: el ? describe(el) : null });
         return;
       }
       case 'redrawCue': {

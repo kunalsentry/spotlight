@@ -209,7 +209,8 @@ async function renderCues() {
       test: onThisPage ? preview : null,
       redraw: onThisPage ? async (c) => { await sendToTab({ action: 'redrawCue', id: c.id }); window.close(); } : null,
       measure: onThisPage ? (c) => sendToTab({ action: 'cueGeometry', id: c.id, cue: c }) : null,
-      pickEnd: onThisPage ? async (c) => { await sendToTab({ action: 'pickCueEnd', id: c.id }); window.close(); } : null,
+      pick: onThisPage ? async (c, what) => { await sendToTab({ action: 'pickCueElement', id: c.id, what }); window.close(); } : null,
+      check: onThisPage ? (element) => sendToTab({ action: 'checkElement', element }) : null,
       changed: onCueChanged,
       deleted: () => renderCues(),
     });

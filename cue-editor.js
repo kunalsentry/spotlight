@@ -10,7 +10,9 @@
 //   redraw()     place and size its spotlight again on the page
 //   measure()    -> Promise<{ w, h } | null>: its anchor's current size, used
 //                to convert between area modes without moving the spotlight
-//   pickEnd()    pick the element whose click ends this cue, on the page
+//   pick(what)   pick the trigger ('trigger') or end ('end') element on the page
+//   check(fp)    -> Promise<{ counts, found } | null>: what a fingerprint finds
+//                on the page now (and outline it there)
 //   changed(cue) called after each saved change (e.g. to refresh a preview)
 // The spotlight's area rules are explained at the top of cues.js.
 
@@ -146,6 +148,10 @@ const CueEditor = (() => {
       test.addEventListener('click', (e) => { e.preventDefault(); hooks.test(cue); });
       sumEl.append(test);
     }
+    const trash = el('button', { type: 'button', className: 'ce-btn ce-icon ce-danger', title: 'Delete this cue', ariaLabel: 'Delete cue' });
+    trash.innerHTML = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6.5 4.5V3h3v1.5M4 4.5l.7 8.5h6.6l.7-8.5M6.8 7v4M9.2 7v4"/></svg>';
+    trash.addEventListener('click', (e) => { e.preventDefault(); remove(); });
+    sumEl.append(trash);
     // Clicks on the checkbox shouldn't open or close the editor.
     enabled.addEventListener('click', (e) => e.stopPropagation());
     enabled.addEventListener('change', () => {
@@ -184,9 +190,14 @@ const CueEditor = (() => {
     }
     body.append(row('Page', el('div', { className: 'ce-stack' }, host, path, pageError)));
 
-    // Trigger (read-only: re-record the cue to change it)
-    const trigger = cue.trigger.element[0];
-    body.append(row('Trigger', el('div', { className: 'ce-note', textContent: `Click on ${trigger.name ? `“${trigger.name}”` : trigger.sel}`, title: cue.trigger.element.map((s) => `${s.kind}: ${s.sel}${s.name ? ` “${s.name}”` : ''}`).join('\n') })));
+    // Trigger: re-pick it on the page, or edit how it's found.
+    body.append(row('Trigger', elementEditor({
+      what: 'trigger',
+      get: () => cue.trigger.element,
+      label: () => cue.trigger.name,
+      set: (fp) => change((c) => { c.trigger = { ...c.trigger, element: fp }; }),
+      describe: (name) => `Click on ${name}`,
+    })));
 
     // Spotlight area
     const area = el('div', { className: 'ce-area' });
@@ -283,14 +294,13 @@ const CueEditor = (() => {
       });
       ends.append(mode);
       if (end?.on === 'element') {
-        ends.append(el('div', { className: 'ce-note', textContent: end.element ? `Ends on a click on “${end.name}”` : 'No element picked yet' }));
-        if (hooks.pickEnd) {
-          const pick = el('button', { type: 'button', className: 'ce-btn', textContent: end.element ? 'Pick another element' : 'Pick element on page' });
-          pick.addEventListener('click', () => hooks.pickEnd(cue));
-          ends.append(pick);
-        } else if (!end.element) {
-          ends.append(el('div', { className: 'ce-note', textContent: 'Pick it from the popup’s Cues tab, on the cue’s page.' }));
-        }
+        ends.append(elementEditor({
+          what: 'end',
+          get: () => cue.deactivate?.element,
+          label: () => cue.deactivate?.name,
+          set: (fp) => change((c) => { c.deactivate = { ...c.deactivate, element: fp }; }),
+          describe: (name) => `Ends on a click on ${name}`,
+        }));
       } else if (end?.on === 'timer') {
         const secs = el('input', { type: 'number', value: end.ms / 1000, min: 1, max: 600, step: 1, ariaLabel: 'Seconds until the spotlight ends' });
         secs.addEventListener('change', () => {
@@ -316,16 +326,112 @@ const CueEditor = (() => {
     )));
 
     // Delete
-    const del = el('button', { type: 'button', className: 'ce-btn ce-danger', textContent: 'Delete cue' });
-    del.addEventListener('click', async () => {
+    async function remove() {
       if (!confirm(`Delete “${cue.name}”?`)) return;
       await CueStore.remove(cue.id);
       root.remove();
       hooks.deleted?.(cue);
-    });
+    }
+    const del = el('button', { type: 'button', className: 'ce-btn ce-danger', textContent: 'Delete cue' });
+    del.addEventListener('click', remove);
     body.append(el('div', { className: 'ce-foot' }, del));
 
+    // An element a cue looks for (its trigger, or the one that ends it): a
+    // summary, Pick on page / Check on page, and its matching strategies,
+    // which can be edited, added and removed. A strategy is a CSS selector,
+    // optionally narrowed to elements with an exact accessible name; the
+    // first one that finds exactly one element is used.
+    function elementEditor({ what, get, label, set, describe }) {
+      const box = el('div', { className: 'ce-el' });
+      render();
+      return box;
+
+      function render() {
+        box.textContent = '';
+        const fp = get() || [];
+        const named = label() || fp.find((st) => st.name)?.name;
+        box.append(el('div', { className: 'ce-note', textContent: fp.length ? describe(named ? `“${named}”` : fp[0].sel) : 'No element picked yet' }));
+
+        const status = el('div', { className: 'ce-note ce-status', hidden: true });
+        const actions = el('div', { className: 'ce-actions' });
+        if (hooks.pick) {
+          const pick = el('button', { type: 'button', className: 'ce-btn', textContent: fp.length ? 'Pick on page' : 'Pick element on page', title: 'Click the element on the page' });
+          pick.addEventListener('click', () => hooks.pick(cue, what));
+          actions.append(pick);
+        }
+        const counts = [];
+        if (hooks.check && fp.length) {
+          const checkBtn = el('button', { type: 'button', className: 'ce-btn', textContent: 'Check on page', title: 'Outline what this finds on the page' });
+          checkBtn.addEventListener('click', async () => {
+            const result = await hooks.check(get());
+            status.hidden = false;
+            if (!result) { status.textContent = 'Can’t check on this page'; return; }
+            status.textContent = result.found ? `Finds “${result.found}” (outlined on the page)` : 'Finds nothing on this page right now';
+            status.classList.toggle('ce-bad', !result.found);
+            result.counts.forEach((n, i) => {
+              if (!counts[i]) return;
+              counts[i].textContent = n === 1 ? '1 match' : `${n} matches`;
+              counts[i].classList.toggle('ce-bad', n !== 1);
+            });
+          });
+          actions.append(checkBtn);
+        }
+        if (!hooks.pick && !fp.length) actions.append(el('div', { className: 'ce-note', textContent: 'Pick it from the popup’s Cues tab, on the cue’s page.' }));
+        if (actions.children.length) box.append(actions);
+        box.append(status);
+
+        if (!fp.length) return;
+        const adv = el('details', { className: 'ce-adv' });
+        adv.append(el('summary', { textContent: `Matching (${fp.length} way${fp.length === 1 ? '' : 's'})` }));
+        fp.forEach((st, i) => {
+          const sel = el('input', { type: 'text', value: st.sel, spellcheck: false, ariaLabel: `Selector ${i + 1}`, placeholder: 'CSS selector' });
+          const name = el('input', { type: 'text', value: st.name ?? '', ariaLabel: `Name ${i + 1}`, placeholder: 'any name' });
+          const removeBtn = el('button', { type: 'button', className: 'ce-btn ce-icon', textContent: '×', title: 'Remove this way of finding it', ariaLabel: `Remove ${i + 1}` });
+          counts[i] = el('span', { className: 'ce-count' });
+          const save = () => {
+            const value = sel.value.trim();
+            const ok = validSelector(value);
+            sel.classList.toggle('invalid', !ok);
+            if (!ok) return;
+            const next = structuredClone(get());
+            const kind = st.kind === 'custom' || st.kind.endsWith('(edited)') ? st.kind : `${st.kind} (edited)`;
+            next[i] = { kind, sel: value };
+            if (name.value.trim()) next[i].name = name.value.trim();
+            set(next);
+          };
+          sel.addEventListener('change', save);
+          name.addEventListener('change', save);
+          removeBtn.disabled = fp.length === 1; // keep at least one
+          removeBtn.addEventListener('click', async () => {
+            await set(get().filter((_, j) => j !== i));
+            render();
+          });
+          adv.append(el('div', { className: 'ce-strat' },
+            el('div', { className: 'ce-strat-head' }, el('span', { textContent: `${i + 1}. ${st.kind}` }), counts[i], removeBtn),
+            sel, name));
+        });
+        const add = el('button', { type: 'button', className: 'ce-btn', textContent: 'Add a selector' });
+        add.addEventListener('click', async () => {
+          await set([...get(), { kind: 'custom', sel: fp[0].sel }]);
+          render();
+          box.querySelector('.ce-adv').open = true;
+        });
+        adv.append(el('div', { className: 'ce-hint', textContent: 'Tried in order; the first that finds exactly one element is used.' }), add);
+        box.append(adv);
+      }
+    }
+
     return root;
+  }
+
+  function validSelector(sel) {
+    if (!sel) return false;
+    try {
+      document.createDocumentFragment().querySelector(sel);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   function row(label, content) {
