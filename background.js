@@ -1,9 +1,16 @@
 // Spotlight — service worker.
 // Routes the keyboard command, the page right-click menu item and popup
 // requests to the content script in the active tab, injecting it on demand,
-// and keeps the toolbar badge and the menu item's tick in sync.
+// and keeps the toolbar badge and the menu item's tick in sync. It also owns
+// whether cues are armed (kept in session storage, so every browser session
+// starts unarmed) and resizes the window for testing cues at other sizes.
 
 const MENU_ID = 'toggle-spotlight';
+const CONTENT_SCRIPTS = ['content.js', 'cues.js'];
+const ON_COLOR = '#7553FF';  // blurple: spotlight on in this tab
+const CUE_COLOR = '#FD44B0'; // pink: cues armed
+
+const getArmed = async () => !!(await chrome.storage.session.get({ cuesArmed: false })).cuesArmed;
 
 // One plain item, so Chrome shows it directly in the page's right-click menu
 // (it only nests an extension's items in a submenu when there are several).
@@ -23,7 +30,7 @@ async function sendToTab(tabId, message) {
     return await chrome.tabs.sendMessage(tabId, message);
   } catch {
     try {
-      await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+      await chrome.scripting.executeScript({ target: { tabId }, files: CONTENT_SCRIPTS });
       return await chrome.tabs.sendMessage(tabId, message);
     } catch (err) {
       console.warn('Spotlight unavailable on this tab:', err?.message);
@@ -32,10 +39,60 @@ async function sendToTab(tabId, message) {
   }
 }
 
-function updateBadge(tabId, state) {
-  chrome.action.setBadgeText({ tabId, text: state?.spotlight ? 'ON' : '' }).catch(() => {});
-  chrome.action.setBadgeBackgroundColor({ tabId, color: '#7553FF' }).catch(() => {});
+// ON while this tab's spotlight is on; otherwise CUE while cues are armed.
+async function updateBadge(tabId, state) {
+  const armed = await getArmed();
+  const text = state?.spotlight ? 'ON' : armed ? 'CUE' : '';
+  chrome.action.setBadgeText({ tabId, text }).catch(() => {});
+  chrome.action.setBadgeBackgroundColor({ tabId, color: state?.spotlight ? ON_COLOR : CUE_COLOR }).catch(() => {});
   syncMenu(tabId, state);
+}
+
+// Arm or disarm cues everywhere: the default badge (tabs we haven't
+// talked to), and every tab's content script, which answers with its state
+// so its own badge can be updated too.
+async function setArmed(armed) {
+  await chrome.storage.session.set({ cuesArmed: armed });
+  chrome.action.setBadgeText({ text: armed ? 'CUE' : '' }).catch(() => {});
+  chrome.action.setBadgeBackgroundColor({ color: CUE_COLOR }).catch(() => {});
+  const tabs = await chrome.tabs.query({});
+  await Promise.all(tabs.map(async (tab) => {
+    const state = await chrome.tabs.sendMessage(tab.id, { action: 'cuesArmed', value: armed }).catch(() => null);
+    if (state) updateBadge(tab.id, state);
+    else chrome.action.setBadgeText({ tabId: tab.id, text: armed ? 'CUE' : '' }).catch(() => {});
+  }));
+  return armed;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Resize a window to test cues at another size ("1440x900"), remembering its
+// original size and state the first time; "restore" puts it back.
+async function resizeWindow(windowId, size) {
+  const key = `bounds:${windowId}`;
+  const saved = (await chrome.storage.session.get(key))[key];
+  if (size === 'restore') {
+    if (!saved) return;
+    await chrome.storage.session.remove(key);
+    if (saved.state === 'normal') {
+      const { left, top, width, height } = saved;
+      await chrome.windows.update(windowId, { left, top, width, height });
+    } else {
+      await chrome.windows.update(windowId, { state: saved.state });
+    }
+    return;
+  }
+  const [width, height] = size.split('x').map(Number);
+  const win = await chrome.windows.get(windowId);
+  if (!saved) {
+    const { state, left, top, width: w, height: h } = win;
+    await chrome.storage.session.set({ [key]: { state, left, top, width: w, height: h } });
+  }
+  if (win.state !== 'normal') {
+    await chrome.windows.update(windowId, { state: 'normal' });
+    await sleep(win.state === 'fullscreen' ? 900 : 300); // let macOS finish leaving fullscreen
+  }
+  await chrome.windows.update(windowId, { width, height });
 }
 
 // The menu item is shared by all tabs, so its label follows the active tab.
@@ -65,6 +122,10 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 });
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
+  if (command === 'toggle-cues') {
+    setArmed(!(await getArmed()));
+    return;
+  }
   if (command !== 'toggle-spotlight') return;
   const target = tab?.id != null ? tab : (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
   if (!target?.id) return;
@@ -81,9 +142,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Popup asking us to talk to a tab on its behalf.
   if (msg?.type === 'relay' && msg.tabId != null) {
     sendToTab(msg.tabId, msg.payload).then((state) => {
-      if (state) updateBadge(msg.tabId, state);
+      if (state && 'spotlight' in state) updateBadge(msg.tabId, state);
       sendResponse(state);
     });
     return true; // keep the channel open for the async response
+  }
+  if (msg?.type === 'getCuesArmed') {
+    getArmed().then(sendResponse);
+    return true;
+  }
+  if (msg?.type === 'setCuesArmed') {
+    setArmed(!!msg.value).then(sendResponse);
+    return true;
+  }
+  if (msg?.type === 'resizeWindow' && msg.windowId != null) {
+    resizeWindow(msg.windowId, msg.size).then(() => sendResponse(true), () => sendResponse(false));
+    return true;
+  }
+  if (msg?.type === 'hasSavedBounds' && msg.windowId != null) {
+    const key = `bounds:${msg.windowId}`;
+    chrome.storage.session.get(key).then((v) => sendResponse(!!v[key]));
+    return true;
   }
 });

@@ -81,6 +81,9 @@
   // temporary: going back to following the cursor, or turning the spotlight
   // off, returns to the configured size from the popup.
   let sizeOverride = null;       // { w, h } or null
+  // Shape set by a cue (a box, since a cue has a width and a height). Just as
+  // temporary as sizeOverride, and cleared with it.
+  let shapeOverride = null;      // 'circle' | 'rounded' or null
   let drawn = null;              // size currently on screen, eases toward shapeSize()
   let drag = null;               // { pointerId, offX, offY } while dragging
   // The zoom is one view transform: a page point v (in normal, unzoomed
@@ -101,25 +104,26 @@
   let rafId = 0;
 
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const shape = () => shapeOverride ?? settings.shape;
 
   // The spotlight can be as large as the viewport (a circle up to its longer
   // side). Stored sizes beyond that are kept, just drawn clamped.
   function maxSize() {
     const w = Math.max(MIN_SIZE, innerWidth);
     const h = Math.max(MIN_SIZE, innerHeight);
-    return settings.shape === 'circle' ? { w: Math.max(w, h), h: Math.max(w, h) } : { w, h };
+    return shape() === 'circle' ? { w: Math.max(w, h), h: Math.max(w, h) } : { w, h };
   }
 
   function shapeSize() {
     const max = maxSize();
     const src = sizeOverride ?? { w: settings.width, h: settings.height };
     const w = clamp(src.w, MIN_SIZE, max.w);
-    const h = settings.shape === 'circle' ? w : clamp(src.h, MIN_SIZE, max.h);
+    const h = shape() === 'circle' ? w : clamp(src.h, MIN_SIZE, max.h);
     return { w, h };
   }
 
   function cornerRadii(w, h) {
-    if (settings.shape === 'circle') return { rx: w / 2, ry: h / 2 };
+    if (shape() === 'circle') return { rx: w / 2, ry: h / 2 };
     const r = Math.min(ROUNDED_RADIUS, w / 2, h / 2);
     return { rx: r, ry: r };
   }
@@ -351,7 +355,7 @@
   // it, it still covers the screen. Moving is then a transform the compositor
   // applies; only a size change repaints the mask.
   function paintMask(w, h) {
-    const key = `${w},${h},${settings.shape},${innerWidth},${innerHeight}`;
+    const key = `${w},${h},${shape()},${innerWidth},${innerHeight}`;
     if (painted?.key === key) return;
     const { rx, ry } = cornerRadii(w, h);
     const soft = SOFT_EDGE;
@@ -377,7 +381,7 @@
   // Outline, grab zone and resize handles, at the on-screen size so stroke
   // widths and handle sizes stay constant while zoomed.
   function paintRing(w, h) {
-    const key = `${w},${h},${settings.shape}`;
+    const key = `${w},${h},${shape()}`;
     if (ringKey === key) return;
     ringKey = key;
     const { rx, ry } = cornerRadii(w, h);
@@ -429,7 +433,7 @@
     const { x, y, w, h } = visual();
     const dx = Math.abs(px - x);
     const dy = Math.abs(py - y);
-    if (settings.shape === 'circle') {
+    if (shape() === 'circle') {
       const a = w / 2;
       const b = h / 2;
       const d = Math.hypot(dx / a, dy / b);
@@ -527,9 +531,43 @@
   }
 
   function resetSize(instant = false) {
-    if (!sizeOverride) return;
+    if (!sizeOverride && !shapeOverride) return;
     sizeOverride = null;
+    shapeOverride = null;
     applyShape(instant);
+  }
+
+  // Turn the spotlight on already placed over `rect` (screen coordinates), or
+  // move an active one there, as a cue does. Afterwards it's an ordinary
+  // placed spotlight: drag, resize, ⌖, zoom and ✕ all work as usual.
+  function placeSpotlight(rect, { shape: s = 'rounded', zoom: zoomIn = false } = {}) {
+    ensureOverlay();
+    endDrag();
+    // Measured through the current zoom (if any), so it frames the same
+    // content once the page has zoomed back out.
+    const k = zoom.el ? zoom.view.s : 1;
+    const c = toPage(rect.x + rect.w / 2, rect.y + rect.h / 2);
+    if (zoom.el) setZoom(false);
+    const wasActive = spot.active;
+    spot.active = true;
+    spot.pinned = true;
+    shapeOverride = s;
+    sizeOverride = { w: Math.round(rect.w / k), h: Math.round(rect.h / k) };
+    spot.pinX = spot.x = c.x;
+    spot.pinY = spot.y = c.y;
+    rootEl.classList.add('pinned');
+    clearTimeout(hudTimer);
+    hudEl.classList.remove('show');
+    measureToolbar();
+    applyShape(true);
+    if (!wasActive) {
+      maskEl.getBoundingClientRect(); // flush styles so the fade-in runs
+      rootEl.classList.add('on');
+    }
+    peekToolbar();
+    startLoop();
+    if (zoomIn) setZoom(true, { quiet: true });
+    reportState();
   }
 
   function setPinned(pinned) {
@@ -772,13 +810,13 @@
     const sign = corner === 'se' ? 1 : -1;
     // On a curved outline the handle sits at (0.5 + 0.5·cos45°) of the size,
     // so scale the movement up to keep the handle under the pointer.
-    const k = settings.shape === 'circle' ? 2 / (1 + Math.SQRT1_2) : 1;
+    const k = shape() === 'circle' ? 2 / (1 + Math.SQRT1_2) : 1;
     const dx = (px - drag.startX) * k * sign;
     const dy = (py - drag.startY) * k * sign;
     const max = maxSize();
     let w = Math.round(clamp(w0 + dx, MIN_SIZE, max.w));
     let h = Math.round(clamp(h0 + dy, MIN_SIZE, max.h));
-    if (settings.shape === 'circle') {
+    if (shape() === 'circle') {
       w = h = Math.round(clamp(w0 + (dx + dy) / 2, MIN_SIZE, max.w));
     }
     spot.pinX = spot.x = corner === 'se' ? left + w / 2 : right - w / 2;
@@ -786,7 +824,7 @@
     sizeOverride = { w, h };
     drag.resized = true;
     applyShape(true);
-    showHud(settings.shape === 'circle' ? `${w}px` : `${w} × ${h}px`, 900);
+    showHud(shape() === 'circle' ? `${w}px` : `${w} × ${h}px`, 900);
   }
 
   function onDragEnd(e) {
@@ -1023,11 +1061,14 @@
 
   // ------------------------------------------------- extension integration
 
+  const stateListeners = new Set();
+
   function getState() {
     return { spotlight: spot.active, pinned: spot.pinned, zoomed: zoom.mode === 'in', viewport: { w: innerWidth, h: innerHeight } };
   }
 
   function reportState() {
+    for (const fn of stateListeners) fn(getState());
     try {
       chrome.runtime.sendMessage({ type: 'state', state: getState() }).catch(() => {});
     } catch {
@@ -1055,6 +1096,7 @@
     // counts as a spotlight interaction, so it zooms out.
     if (changes.width || changes.height || changes.shape) {
       sizeOverride = null;
+      shapeOverride = null;
       if (zoomBtn) setZoom(false);
     }
     applyShape();
@@ -1086,6 +1128,8 @@
     cancelAnimationFrame(inkRaf);
     endZoom();
     host?.remove();
+    stateListeners.clear();
+    if (globalThis.__spotlight === api) delete globalThis.__spotlight;
     try {
       chrome.runtime.onMessage.removeListener(onMessage);
       chrome.storage.onChanged.removeListener(onStorageChanged);
@@ -1093,6 +1137,26 @@
       // extension context already gone
     }
   }
+
+  // For cues.js, which runs in the same content-script world (never visible
+  // to the page). Geometry is in page coordinates: the normal, unzoomed view.
+  const api = {
+    place: placeSpotlight,
+    setSpotlight,
+    setZoom: (on) => setZoom(on, { quiet: true }),
+    setShape: (s) => { shapeOverride = s; applyShape(); },
+    showHud,
+    getState,
+    // The placed spotlight's centre and size.
+    getSpot: () => ({ ...getState(), shape: shape(), x: spot.pinX, y: spot.pinY, ...shapeSize() }),
+    // The zoom transform: a page point v is shown at  o + s·v  on screen.
+    view: () => (zoom.el ? { ...zoom.view } : { ...IDENTITY }),
+    // Add cue UI to the overlay's shadow root, so the spotlight ignores clicks on it.
+    mount: (node) => { ensureOverlay(); rootEl.appendChild(node); },
+    isOverlay: fromOverlay,
+    onState: (fn) => { stateListeners.add(fn); },
+  };
+  globalThis.__spotlight = api;
 
   for (const [target, type, fn, opts] of listeners) target.addEventListener(type, fn, opts);
   document.addEventListener(TEARDOWN_EVENT, teardown);

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spotlight cues</title>
+  <link rel="stylesheet" href="cue-editor.css">
+  <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #362d59;
+      --muted: #79628c;
+      --line: #ececf1;
+      --chip: #f6f6f8;
+      --card: #ffffff;
+      --seg-on: #ffffff;
+      --accent: #7553ff;
+      --danger: #c73852;
+      --cue: #fd44b0;
+      color-scheme: light dark;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #181225;
+        --fg: #ffffff;
+        --muted: #9093c1;
+        --line: #362d59;
+        --chip: #2a2142;
+        --card: #1f1633;
+        --seg-on: #362d59;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 32px 16px 64px; background: var(--bg); color: var(--fg);
+      font: 14px/1.45 Rubik, system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    main { max-width: 760px; margin: 0 auto; }
+    header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+    h1 { font-size: 22px; margin: 0; }
+    header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; max-width: 480px; }
+    .actions { display: flex; gap: 8px; }
+    button, .file {
+      font: inherit; font-size: 13px; color: var(--fg); background: var(--chip); border: 0; border-radius: 7px;
+      padding: 6px 12px; cursor: pointer;
+    }
+    button:hover, .file:hover { color: var(--accent); }
+    button:focus-visible, .file:focus-within, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    button.danger:hover { color: #fff; background: var(--danger); }
+    .file input { display: none; }
+
+    h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 26px 0 8px; }
+    .empty { color: var(--muted); padding: 40px 0; text-align: center; border: 1px dashed var(--line); border-radius: 10px; }
+    .hint { color: var(--muted); font-size: 12px; }
+    /* Roomier than the popup. */
+    .ce > summary { padding: 10px 12px; }
+    .ce-name { font-size: 14px; }
+    .ce-sum { font-size: 12px; }
+    .ce-body { padding: 12px 14px 14px; gap: 10px; }
+    .ce-row { grid-template-columns: 90px minmax(0, 1fr); font-size: 13px; }
+    .ce-area { max-width: 460px; }
+
+    @media (max-width: 560px) {
+      .ce-row { grid-template-columns: 1fr; gap: 4px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Cues</h1>
+        <p>A cue turns the spotlight on when you click a specific element on matching pages, while cues are armed. Record, test and redraw cues from the <b>Cues</b> tab in the Spotlight popup.</p>
+      </div>
+      <div class="actions">
+        <label class="file" title="Add cues from a JSON file">Import<input type="file" id="import" accept="application/json,.json"></label>
+        <button id="export" title="Save all cues as a JSON file">Export</button>
+      </div>
+    </header>
+    <div id="message" class="hint" role="status"></div>
+    <div id="list"></div>
+  </main>
+  <script src="cue-editor.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
