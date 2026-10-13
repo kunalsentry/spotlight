@@ -10,8 +10,9 @@ A Manifest V3 Chrome extension that spotlights part of a web page while you pres
 | `background.js` | Service worker. Sends the shortcut, right-click menu and popup actions to the active tab, injects the content script into tabs that were already open, and keeps the **ON** badge and the menu item's label up to date |
 | `content.js` | The spotlight: overlay, effects, cursor following, placing, dragging, and the on-page toolbar |
 | `cues.js` | Cues: recording, finding elements again, matching pages, and placing the spotlight when a cue's trigger is clicked |
-| `popup.html` / `popup.js` | On/off switch, shape, size, effect, and strength controls, plus arming, recording and testing cues |
-| `options.html` / `options.js` | The cue manager: edit, enable, delete, import and export cues |
+| `popup.html` / `popup.js` | Two tabs: **Spotlight** (on/off switch, shape, size, effect, strength, ink, zoom) and **Cues** (arm, record, test and edit cues) |
+| `cue-editor.js` / `cue-editor.css` | The cue editor, shared by the popup's Cues tab and the cue manager |
+| `options.html` / `options.js` | The cue manager: every cue on one page, plus import and export |
 | `icons/` | Toolbar and extension icons |
 
 ## Load it in Chrome
@@ -42,14 +43,23 @@ On Windows, Chrome uses Alt+D to jump to the address bar, which may take priorit
 
 A cue turns the spotlight on by itself when you click a specific element on certain pages: for example, clicking **Open trace** on any issue spotlights the trace waterfall, already sized and optionally zoomed. Cues only run while they're **armed**.
 
-- **Arm:** flip the switch under **Cues** in the popup, or press **⌥⇧S** (Alt+Shift+S). The toolbar badge reads **CUE** while armed (**ON** still wins while a spotlight is on). Every browser session starts unarmed, so cues never fire when you aren't presenting.
-- **Record:** open the popup on the page and click **Record cue**.
+Everything about cues is on the popup's **Cues** tab (the popup reopens on the tab you used last).
+
+- **Arm:** flip the switch at the top of the Cues tab, or press **⌥⇧S** (Alt+Shift+S). The toolbar badge reads **CUE** while armed (**ON** still wins while a spotlight is on), and the tab shows an **Armed** label. Every browser session starts unarmed, so cues never fire when you aren't presenting.
+- **Record:** on the page, click **Record cue**.
   1. Click the element that should trigger the cue. A pink outline shows what will be picked, and the click goes through to the page, so whatever it opens appears.
   2. The spotlight turns on as a box. Click to place it, then drag and resize it as usual. Zoom in with 🔍 if the cue should zoom. What you see is what's saved.
   3. Click **Save cue** or press Enter (Esc cancels).
-- **When a cue fires,** the spotlight is placed exactly as if you had placed it by hand, with the cue's size, shape and zoom instead of the popup's. Everything else works as usual: drag, resize, ⌖ (back to the popup's size and shape), 🔍, ✕ and ⌥S. The effect and strength come from the popup.
-- **Test:** the popup lists this page's cues with a **Test** button each, and **Test at** resizes the window to 1280, 1440 or 1920 pixels wide (↺ restores it) so you can check how a cue adapts.
-- **Manage:** **Manage cues** opens a page where you can rename, enable or disable, and delete cues, edit their page patterns, toggle zoom and scrolling, and import or export them as JSON to share with others.
+- **When a cue fires,** the spotlight is placed exactly as if you had placed it by hand, with the cue's size, shape and zoom instead of the popup's. Everything else works as usual: drag, resize, ⌖ (back to the popup's size and shape), 🔍, ✕ and ⌥S. The effect and strength come from the Spotlight tab.
+- **Edit:** the Cues tab lists this page's cues (**Show all** lists every cue). Click one to open its editor; changes save as you make them:
+  - **Name** and **Page** (the URL pattern; see below).
+  - **Area:** for the width and the height, either **Follows element** (with padding on each side) or **Fixed** (a size, measured from the left/top, the right/bottom, or the centre). Switching between them keeps the spotlight where it is on the page. **Redraw on page** lets you place and size it again with the mouse.
+  - **Shape:** box or circle (a circle's height is its width).
+  - **Ends:** how the cue's spotlight turns off: manually (✕ or ⌥S, the default), on a click on an element you pick on the page (**Pick element on page**, e.g. a drawer's Close button; the click still goes through to the page), on a click outside the spotlight, or after a delay. A click that ends one cue can trigger another.
+  - **Options:** zoom in, scroll into view, and how long to wait for the element to appear.
+  - **Test** shows the cue's spotlight on the page; while it's showing, every change you make updates it right away. Test, redraw and picking an end element need the cue's page, so they appear only for cues on this page.
+- **Test at** resizes the window to 1280, 1440 or 1920 pixels wide (↺ restores it) so you can check how cues adapt.
+- **Open cue manager** opens a full page with every cue, grouped by site, in the same editor, plus **Import** and **Export** (JSON) to share cues with others.
 
 ### How cues find things again
 
@@ -59,7 +69,7 @@ A cue turns the spotlight on by itself when you click a specific element on cert
 - **Timing:** after the click, the cue waits up to 3 seconds for its element to appear and stop moving (a drawer sliding in, say), scrolls it into view if needed, then places the spotlight. If the element isn't there, is hidden at this window size, or is off-screen, it shows a message instead of spotlighting the wrong thing.
 - **Clicks that load a new page** finish on the new page (same site, within 10 seconds).
 
-Cue limitations: only clicks trigger cues; synthetic clicks made by page scripts are ignored; elements inside iframes or other sites' shadow DOM can't be triggers or anchors; and a layout that changes completely at some window size can leave a cue without its element.
+Cue limitations: only clicks trigger (or end) cues; synthetic clicks made by page scripts are ignored; elements inside iframes or other sites' shadow DOM can't be triggers or anchors; and a layout that changes completely at some window size can leave a cue without its element.
 
 ## Popup options
 

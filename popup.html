@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>Spotlight</title>
+  <link rel="stylesheet" href="cue-editor.css">
   <style>
     /* Sentry (sentry.io) palette: dark violet text, blurple accent,
        rich-black surfaces in dark mode. */
@@ -15,6 +16,8 @@
       --seg-on: #ffffff;
       --accent: #7553ff;  /* blurple */
       --track: #cfcfdb;   /* gray-3 */
+      --cue: #fd44b0;     /* cues armed (pink, like the badge) */
+      --danger: #c73852;
       color-scheme: light dark;
     }
     @media (prefers-color-scheme: dark) {
@@ -30,7 +33,7 @@
     }
     * { box-sizing: border-box; }
     body {
-      margin: 0; width: 264px; padding: 14px 16px 12px;
+      margin: 0; width: 300px; padding: 10px 16px 12px;
       background: var(--bg); color: var(--fg);
       font: 13px/1.4 Rubik, system-ui, -apple-system, "Segoe UI", sans-serif;
     }
@@ -84,8 +87,20 @@
     .slider output { text-align: right; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
     input[type="range"] { width: 100%; margin: 0; accent-color: var(--accent); }
 
-    .cues { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
-    .cues .top h2 { font-size: 13px; margin: 0; font-weight: 600; }
+    /* Tabs: Spotlight | Cues */
+    .tabs { display: flex; gap: 2px; margin: 0 -4px 12px; border-bottom: 1px solid var(--line); }
+    .tabs button {
+      font: inherit; font-size: 12.5px; font-weight: 500; color: var(--muted); background: none; border: 0;
+      padding: 6px 8px 8px; margin-bottom: -1px; border-bottom: 2px solid transparent; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+    .tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
+    .tabs .pill { font-size: 10px; font-weight: 600; color: #fff; background: var(--cue); border-radius: 999px; padding: 1px 6px; }
+    .tabs .pill[hidden] { display: none; }
+    [role="tabpanel"][hidden] { display: none; }
+
+    .cues { display: grid; gap: 10px; }
     .btn {
       font: inherit; font-size: 12px; color: var(--fg); background: var(--chip); border: 0; border-radius: 6px;
       padding: 4px 9px; cursor: pointer;
@@ -94,17 +109,18 @@
     .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
     .btn.primary { background: var(--accent); color: #fff; }
     .btn.primary:hover { color: #fff; filter: brightness(1.1); }
-    .cue-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-    .cue-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
-    .cue-list li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .cue-list li.off span { color: var(--muted); text-decoration: line-through; }
-    .cue-list .empty { color: var(--muted); }
     .cue-actions { display: flex; gap: 6px; align-items: center; }
     .cue-actions a { margin-left: auto; font-size: 11.5px; color: var(--muted); text-decoration: none; }
     .cue-actions a:hover { color: var(--fg); }
+    .list-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 11.5px; color: var(--muted); }
+    .list-head button { font: inherit; color: var(--muted); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
+    .list-head button:hover { color: var(--fg); }
+    .cue-list { max-height: 340px; overflow-y: auto; margin: 0 -2px; padding: 0 2px; }
+    .cue-list .empty { color: var(--muted); font-size: 12px; padding: 10px 0; text-align: center; border: 1px dashed var(--line); border-radius: 8px; }
     .seg.sizes button { font-variant-numeric: tabular-nums; }
+    .seg button[hidden] { display: none; }
     #viewport { font-size: 11px; color: var(--muted); }
-    body.unavailable .cues .page-only { opacity: .4; pointer-events: none; }
+    body.unavailable .page-only { opacity: .4; pointer-events: none; }
 
     .foot {
       margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line);
@@ -116,6 +132,12 @@
   </style>
 </head>
 <body>
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button role="tab" id="tab-spotlight" aria-controls="panel-spotlight" aria-selected="true">Spotlight</button>
+    <button role="tab" id="tab-cues" aria-controls="panel-cues" aria-selected="false">Cues <span class="pill" id="armedPill" hidden>Armed</span></button>
+  </nav>
+
+  <section role="tabpanel" id="panel-spotlight" aria-labelledby="tab-spotlight">
   <div class="top">
     <div>
       <h1>Spotlight</h1>
@@ -172,18 +194,23 @@
     </div>
   </div>
 
-  <div class="cues">
+  </section>
+
+  <section role="tabpanel" id="panel-cues" aria-labelledby="tab-cues" class="cues" hidden>
     <div class="top">
       <div>
-        <h2>Cues</h2>
-        <small id="cuesStatus">Off · <kbd id="cuesKey">⌥⇧S</kbd> to arm</small>
+        <h1>Cues</h1>
+        <small id="cuesStatus">Off</small>
       </div>
       <label class="switch"><input type="checkbox" id="cuesArmed" aria-label="Arm cues"><span></span></label>
     </div>
-    <ul class="cue-list page-only" id="cueList"><li class="empty">No cues on this page</li></ul>
     <div class="cue-actions">
       <button class="btn primary page-only" id="recordCue" title="Click an element, then place the spotlight it should show">Record cue</button>
-      <a href="#" id="manageCues">Manage cues</a>
+      <a href="#" id="manageCues">Open cue manager</a>
+    </div>
+    <div>
+      <div class="list-head"><span id="listTitle">On this page</span><button id="showAll" hidden></button></div>
+      <div class="cue-list" id="cueList"></div>
     </div>
     <div class="row page-only" title="Resize this window to check how cues adapt">
       <span>Test at</span>
@@ -195,13 +222,14 @@
       </div>
     </div>
     <div id="viewport"></div>
-  </div>
+  </section>
 
   <div class="foot">
     <span><kbd id="toggleKey">⌥S</kbd> spotlight · hold <kbd>⌥D</kbd> to draw</span>
     <a href="#" id="editShortcuts" title="Change keyboard shortcut">Shortcut</a>
   </div>
 
+  <script src="cue-editor.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

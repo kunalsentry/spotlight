@@ -1,0 +1,59 @@
+/* Cue editor (cue-editor.js). Uses the page's colour tokens: --fg, --muted,
+   --line, --chip, --accent, and optionally --danger and --card. */
+.ce { border: 1px solid var(--line); border-radius: 8px; background: var(--card, transparent); }
+.ce + .ce { margin-top: 6px; }
+.ce.off .ce-name { color: var(--muted); text-decoration: line-through; }
+.ce > summary {
+  list-style: none; display: flex; align-items: center; gap: 8px; padding: 7px 8px; cursor: pointer;
+  border-radius: 8px;
+}
+.ce > summary::-webkit-details-marker { display: none; }
+.ce > summary::after {
+  content: ""; width: 6px; height: 6px; flex: none; margin: 0 2px 2px 0;
+  border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg);
+  transition: transform 120ms;
+}
+.ce[open] > summary::after { transform: rotate(-135deg); margin-bottom: -2px; }
+.ce > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ce-title { flex: 1; min-width: 0; display: grid; }
+.ce-name, .ce-sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ce-name { font-size: 12.5px; font-weight: 500; }
+.ce-sum { font-size: 11px; color: var(--muted); }
+.ce input[type="checkbox"] { accent-color: var(--accent); margin: 0; flex: none; }
+
+.ce-body { display: grid; gap: 8px; padding: 4px 10px 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.ce-row { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 8px; align-items: start; font-size: 12px; }
+.ce-label { color: var(--muted); padding-top: 4px; }
+.ce-stack { display: grid; gap: 5px; }
+.ce-note { color: var(--muted); font-size: 11.5px; padding-top: 4px; overflow-wrap: anywhere; }
+.ce input[type="text"], .ce input[type="number"], .ce select {
+  font: inherit; font-size: 12px; color: var(--fg); background: var(--chip);
+  border: 1px solid transparent; border-radius: 5px; padding: 3px 6px; width: 100%; min-width: 0;
+}
+.ce input:focus-visible, .ce select:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.ce input.invalid { border-color: var(--danger, #c73852); }
+.ce-error { color: var(--danger, #c73852); font-size: 11px; }
+
+.ce-area { display: grid; gap: 7px; }
+.ce-axis { display: grid; gap: 4px; }
+.ce-axis-label { font-size: 11.5px; font-weight: 500; }
+.ce-nums { display: grid; gap: 4px; }
+.ce-num { display: grid; grid-template-columns: 64px 72px auto; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); }
+.ce .ce-num input { text-align: right; font-variant-numeric: tabular-nums; }
+.ce-unit { font-size: 10.5px; }
+
+.ce-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.ce-seg { display: flex; background: var(--chip); border-radius: 6px; padding: 2px; }
+.ce-seg button {
+  flex: 1; font: inherit; font-size: 12px; color: var(--muted); background: none; border: 0; border-radius: 4px;
+  padding: 3px 0; cursor: pointer;
+}
+.ce-seg button[aria-pressed="true"] { background: var(--seg-on, var(--bg)); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.ce-btn {
+  font: inherit; font-size: 11.5px; color: var(--fg); background: var(--chip); border: 0; border-radius: 5px;
+  padding: 3px 8px; cursor: pointer; flex: none; justify-self: start;
+}
+.ce-btn:hover { color: var(--accent); }
+.ce-btn:focus-visible, .ce-seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ce-danger:hover { color: #fff; background: var(--danger, #c73852); }
+.ce-foot { display: flex; justify-content: flex-end; }

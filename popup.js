@@ -81,6 +81,7 @@ function syncVisibility() {
 }
 
 async function init() {
+  initTabs();
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   tabId = tab?.id ?? null;
   settings = await chrome.storage.local.get(DEFAULTS);
@@ -131,44 +132,102 @@ async function init() {
   initCues(commands.find((c) => c.name === 'toggle-cues'));
 }
 
+// ------------------------------------------------------------------ tabs
+
+const TAB_KEY = 'popupTab'; // remembered per viewer: which tab the popup opens on
+
+function showTab(name) {
+  for (const tab of document.querySelectorAll('[role="tab"]')) {
+    const on = tab.id === `tab-${name}`;
+    tab.setAttribute('aria-selected', String(on));
+    tab.tabIndex = on ? 0 : -1;
+    $(tab.getAttribute('aria-controls')).hidden = !on;
+  }
+  try { localStorage.setItem(TAB_KEY, name); } catch { /* storage blocked */ }
+}
+
+function initTabs() {
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  for (const tab of tabs) {
+    tab.addEventListener('click', () => showTab(tab.id.slice(4)));
+    // Arrow keys move between tabs.
+    tab.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const next = tabs[(tabs.indexOf(tab) + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+      showTab(next.id.slice(4));
+      next.focus();
+    });
+  }
+  let saved = 'spotlight';
+  try { saved = localStorage.getItem(TAB_KEY) || saved; } catch { /* storage blocked */ }
+  showTab(saved === 'cues' ? 'cues' : 'spotlight');
+}
+
 // ------------------------------------------------------------------ cues
 
+let pageCueIds = null; // ids of the cues that match this tab's page (null: can't run here)
+let showAll = false;
+let previewId = null;  // the cue whose spotlight was last tested, refreshed as it's edited
+let previewTimer = 0;
+const openIds = new Set(); // editors left open survive a re-render
+
+function preview(cue) {
+  previewId = cue.id;
+  sendToTab({ action: 'testCue', id: cue.id, cue });
+}
+
+// Edits to the cue being previewed show on the page right away.
+function onCueChanged(cue) {
+  if (cue.id !== previewId) return;
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => preview(cue), 250);
+}
+
 async function renderCues() {
-  const info = await sendToTab({ action: 'pageCues' });
-  const list = $('cueList');
-  list.textContent = '';
-  if (!info?.cues?.length) {
-    const li = document.createElement('li');
-    li.className = 'empty';
-    li.textContent = info ? 'No cues on this page' : 'Cues aren’t available here';
-    list.append(li);
+  const all = await CueStore.all();
+  const onPage = pageCueIds ? all.filter((c) => pageCueIds.includes(c.id)) : [];
+  const list = showAll ? all : onPage;
+  const others = all.length - onPage.length;
+  $('listTitle').textContent = showAll ? `All cues (${all.length})` : `On this page (${onPage.length})`;
+  $('showAll').hidden = !others && !showAll;
+  $('showAll').textContent = showAll ? 'This page only' : `Show all (${all.length})`;
+
+  const box = $('cueList');
+  for (const ed of box.querySelectorAll('details[open]')) openIds.add(ed.dataset.id);
+  box.textContent = '';
+  if (!list.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = pageCueIds ? 'No cues on this page yet' : 'Cues can’t run on this page';
+    box.append(empty);
     return;
   }
-  for (const cue of info.cues) {
-    const li = document.createElement('li');
-    li.classList.toggle('off', !cue.enabled);
-    const name = document.createElement('span');
-    name.textContent = cue.name;
-    name.title = cue.name;
-    const test = document.createElement('button');
-    test.className = 'btn';
-    test.textContent = 'Test';
-    test.title = 'Show this cue’s spotlight now';
-    test.addEventListener('click', async () => {
-      await sendToTab({ action: 'testCue', id: cue.id });
-      window.close();
+  for (const cue of list) {
+    const onThisPage = pageCueIds?.includes(cue.id);
+    const ed = CueEditor.create(cue, {
+      // Testing and redrawing need the cue's page; measuring needs its anchor.
+      test: onThisPage ? preview : null,
+      redraw: onThisPage ? async (c) => { await sendToTab({ action: 'redrawCue', id: c.id }); window.close(); } : null,
+      measure: onThisPage ? (c) => sendToTab({ action: 'cueGeometry', id: c.id, cue: c }) : null,
+      pickEnd: onThisPage ? async (c) => { await sendToTab({ action: 'pickCueEnd', id: c.id }); window.close(); } : null,
+      changed: onCueChanged,
+      deleted: () => renderCues(),
     });
-    li.append(name, test);
-    list.append(li);
+    ed.dataset.id = cue.id;
+    ed.open = openIds.has(cue.id) || list.length === 1;
+    ed.addEventListener('toggle', () => { if (ed.open) openIds.add(cue.id); else openIds.delete(cue.id); });
+    box.append(ed);
   }
 }
 
 function renderArmed(armed, key) {
   $('cuesArmed').checked = armed;
-  $('cuesStatus').innerHTML = '';
+  $('armedPill').hidden = !armed;
+  const status = $('cuesStatus');
+  status.textContent = '';
   const kbd = document.createElement('kbd');
   kbd.textContent = key || 'no shortcut';
-  $('cuesStatus').append(armed ? 'Armed · ' : 'Off · ', kbd, armed ? ' to disarm' : ' to arm');
+  status.append(armed ? 'Armed · ' : 'Off · ', kbd, armed ? ' to disarm' : ' to arm');
 }
 
 async function renderViewport() {
@@ -192,6 +251,10 @@ async function initCues(cuesCommand) {
     e.preventDefault();
     chrome.runtime.openOptionsPage();
   });
+  $('showAll').addEventListener('click', () => {
+    showAll = !showAll;
+    renderCues();
+  });
   $('sizes').addEventListener('click', async (e) => {
     const btn = e.target.closest('button');
     if (!btn) return;
@@ -199,6 +262,15 @@ async function initCues(cuesCommand) {
     await chrome.runtime.sendMessage({ type: 'resizeWindow', windowId: win.id, size: btn.dataset.size });
     setTimeout(renderViewport, 200); // the page reports its new size after its resize event
   });
+  // Cues recorded or edited elsewhere (another popup, the manager) show up
+  // here; our own edits don't re-render, so open editors keep their focus.
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.cues) return;
+    const ids = (list) => (list || []).map((c) => c.id).join();
+    if (ids(changes.cues.newValue) !== ids(changes.cues.oldValue)) renderCues();
+  });
+  const info = await sendToTab({ action: 'pageCues' });
+  pageCueIds = info ? info.cues.map((c) => c.id) : null;
   renderCues();
   renderViewport();
 }

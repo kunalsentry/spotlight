@@ -19,6 +19,12 @@
 //   end      fixed size, `inset` from the anchor's end edge
 //   center   fixed size, `offset` from the anchor's centre
 // A cue whose two axes both stretch simply fits its anchor, plus padding.
+//
+// Optionally a cue also ends its spotlight (cue.deactivate):
+//   { on: 'element', element: Fingerprint, name }  a click on that element
+//   { on: 'outside' }                               a click outside the spotlight
+//   { on: 'timer', ms }                             after a delay
+// Otherwise (null) it ends like any spotlight: ✕ or ⌥S.
 
 (() => {
   'use strict';
@@ -41,6 +47,7 @@
   let cues = [];
   let armed = false;
   let run = null;      // the cue being carried out: { cue, timer, ... }
+  let shown = null;    // the cue whose spotlight is on now: { cue, timer }
   let rec = null;      // recording state: { step, trigger, name, page }
   let ui = null;       // recording bar and picker highlight
 
@@ -300,6 +307,7 @@
       run = null;
       clearPending();
       api.place(rect, { shape: spec.shape || 'rounded', zoom: !!spec.zoom });
+      setShown(cue);
     };
     const retry = (failure) => {
       if (performance.now() > r.deadline) {
@@ -311,6 +319,43 @@
       r.timer = setTimeout(poll, POLL_MS);
     };
     r.timer = setTimeout(poll, POLL_MS);
+  }
+
+  // ------------------------------------------------------------ ending cues
+
+  function setShown(cue) {
+    clearShown();
+    shown = { cue, timer: 0 };
+    const end = cue.deactivate;
+    if (end?.on === 'timer' && end.ms > 0) {
+      const mine = shown;
+      shown.timer = setTimeout(() => { if (shown === mine) api.setSpotlight(false); }, end.ms);
+    }
+  }
+
+  function clearShown() {
+    if (!shown) return;
+    clearTimeout(shown.timer);
+    shown = null;
+  }
+
+  // Whether this click ends the cue that's showing. Overlay clicks (toolbar,
+  // handles, edge) never do.
+  function endsCue(e) {
+    const end = shown?.cue.deactivate;
+    if (!end || api.isOverlay(e)) return false;
+    if (end.on === 'element') {
+      const el = end.element && resolve(end.element);
+      return !!el && el.contains(e.target);
+    }
+    if (end.on === 'outside') {
+      const s = api.getSpot();
+      const { ox, oy, s: k } = api.view();
+      const x = ox + k * s.x;
+      const y = oy + k * s.y;
+      return Math.abs(e.clientX - x) > (k * s.w) / 2 || Math.abs(e.clientY - y) > (k * s.h) / 2;
+    }
+    return false;
   }
 
   function clearPending() {
@@ -333,7 +378,10 @@
   function onClick(e) {
     if (!e.isTrusted || e.button !== 0 || api.isOverlay(e)) return;
     if (rec) { onRecordClick(e); return; }
-    if (!armed || !(e.target instanceof Element)) return;
+    if (!(e.target instanceof Element)) return;
+    // End the showing cue first; this click may also trigger another one.
+    if (shown && endsCue(e)) api.setSpotlight(false);
+    if (!armed) return;
     const cue = cueForClick(e.target);
     if (!cue) return;
     // If this click loads another page, the new page finishes the cue.
@@ -403,17 +451,19 @@
   function syncUi() {
     if (!rec) return;
     ensureUi();
-    if (rec.step === 'trigger') {
-      ui.msg.textContent = 'Recording a cue: click the element that triggers it';
-      ui.hint.textContent = 'Esc to cancel';
+    if (rec.step === 'trigger' || rec.step === 'pick-end') {
+      ui.msg.textContent = rec.step === 'trigger' ? 'Recording a cue: click the element that triggers it' : 'Click the element that ends this cue';
+      ui.hint.textContent = rec.step === 'trigger' ? 'Esc to cancel' : `${rec.name} · Esc to cancel`;
       ui.save.hidden = true;
     } else {
       const s = api.getSpot();
       ui.pick.style.display = 'none';
-      ui.msg.textContent = !s.spotlight ? 'Turn the spotlight back on (⌥S) to place it' : s.pinned ? 'Size and place the spotlight, then save' : 'Click to place the spotlight';
+      const verb = rec.replaceId ? 'Redrawing a cue: size' : 'Size';
+      ui.msg.textContent = !s.spotlight ? 'Turn the spotlight back on (⌥S) to place it' : s.pinned ? `${verb} and place the spotlight, then save` : 'Click to place the spotlight';
       ui.hint.textContent = s.pinned ? (s.zoomed ? 'Zoomed: the cue will zoom too' : 'Not zoomed (🔍 to zoom)') : 'Trigger saved';
       ui.save.hidden = false;
       ui.save.disabled = !s.pinned;
+      ui.save.textContent = rec.replaceId ? 'Save area' : 'Save cue';
     }
   }
 
@@ -445,7 +495,7 @@
   }
 
   function onRecordClick(e) {
-    if (rec.step !== 'trigger' || !(e.target instanceof Element)) return;
+    if ((rec.step !== 'trigger' && rec.step !== 'pick-end') || !(e.target instanceof Element)) return;
     const el = triggerElement(e.target);
     const fp = fingerprint(el);
     if (!fp.length) {
@@ -455,10 +505,45 @@
       api.showHud('Can’t identify that element. Try a nearby one.', 2200);
       return;
     }
+    if (rec.step === 'pick-end') {
+      // The click goes through too (it's usually a Close button).
+      const name = describe(el);
+      const id = rec.cueId;
+      updateStoredCue(id, (c) => { c.deactivate = { on: 'element', element: fp, name }; })
+        .then(() => endRecording(`Cue now ends on a click on “${name}”`));
+      return;
+    }
     // The click goes through, so the page shows whatever it opens.
     rec = { step: 'spotlight', trigger: fp, name: describe(el), page: suggestPage() };
     try { sessionStorage.setItem(RECORDING_KEY, JSON.stringify({ ...rec, t: Date.now() })); } catch { /* storage blocked */ }
     setTimeout(beginSpotlightStep, 300);
+  }
+
+  async function updateStoredCue(id, fn) {
+    const { cues: stored = [] } = await chrome.storage.local.get('cues');
+    const cue = stored.find((c) => c.id === id);
+    if (cue) {
+      fn(cue);
+      await chrome.storage.local.set({ cues: stored });
+    }
+  }
+
+  function startPickEnd(cue) {
+    stopRun();
+    api.setSpotlight(false);
+    rec = { step: 'pick-end', cueId: cue.id, name: cue.name };
+    syncUi();
+  }
+
+  // Place and size an existing cue's spotlight again: straight to the
+  // spotlight step, starting from where the cue puts it now (if it can).
+  function startRedraw(cue) {
+    stopRun();
+    rec = { step: 'spotlight', trigger: cue.trigger.element, name: cue.name, page: cue.page, replaceId: cue.id };
+    beginSpotlightStep();
+    const anchor = cue.spotlight.anchor ? resolve(cue.spotlight.anchor) : null;
+    const box = anchor?.getBoundingClientRect();
+    if (!cue.spotlight.anchor || box?.width) api.place(cueRect(cue.spotlight, box), { shape: cue.spotlight.shape || 'rounded' });
   }
 
   function beginSpotlightStep() {
@@ -495,9 +580,17 @@
       createdAt: Date.now(),
     };
     const { cues: stored = [] } = await chrome.storage.local.get('cues');
-    await chrome.storage.local.set({ cues: [...stored, cue] });
+    const old = rec.replaceId && stored.find((c) => c.id === rec.replaceId);
+    if (old) {
+      // Redrawn: keep everything but the area (and what's on screen: shape, zoom).
+      const { scroll, timeoutMs } = old.spotlight;
+      old.spotlight = { ...cue.spotlight, scroll, timeoutMs };
+      await chrome.storage.local.set({ cues: stored });
+    } else {
+      await chrome.storage.local.set({ cues: [...stored, cue] });
+    }
     const where = !anchor ? 'placed on the window' : cue.spotlight.x.pin === 'stretch' && cue.spotlight.y.pin === 'stretch' ? `fits ${cue.spotlight.anchorName}` : `inside ${cue.spotlight.anchorName}`;
-    endRecording(`Cue saved (${where})${armed ? '' : ' · arm cues to use it'}`);
+    endRecording(old ? `Cue updated (${where})` : `Cue saved (${where})${armed ? '' : ' · arm cues to use it'}`);
   }
 
   function endRecording(message) {
@@ -555,8 +648,31 @@
         sendResponse({ ok: true });
         return;
       case 'testCue': {
+        // The popup sends the cue it's editing, which may be newer than ours.
+        const cue = msg.cue ?? cues.find((c) => c.id === msg.id);
+        if (cue && !rec) runCue(cue);
+        sendResponse({ ok: !!cue });
+        return;
+      }
+      case 'cueGeometry': {
+        // The size of the cue's anchor (or the window) right now, so the
+        // editor can switch area modes without moving the spotlight.
+        const cue = msg.cue ?? cues.find((c) => c.id === msg.id);
+        const anchor = cue?.spotlight.anchor ? resolve(cue.spotlight.anchor) : null;
+        const box = anchor?.getBoundingClientRect();
+        const { s: k } = api.view();
+        sendResponse(!cue ? null : !cue.spotlight.anchor ? { w: innerWidth, h: innerHeight } : box?.width ? { w: box.width / k, h: box.height / k } : null);
+        return;
+      }
+      case 'pickCueEnd': {
         const cue = cues.find((c) => c.id === msg.id);
-        if (cue) runCue(cue);
+        if (cue) startPickEnd(cue);
+        sendResponse({ ok: !!cue });
+        return;
+      }
+      case 'redrawCue': {
+        const cue = cues.find((c) => c.id === msg.id);
+        if (cue) startRedraw(cue);
         sendResponse({ ok: !!cue });
         return;
       }
@@ -594,6 +710,7 @@
     document.removeEventListener(TEARDOWN_EVENT, teardown);
     for (const [target, type, fn, opts] of listeners) target.removeEventListener(type, fn, opts);
     stopRun();
+    clearShown();
     ui?.root.remove();
     try {
       chrome.runtime.onMessage.removeListener(onMessage);
@@ -608,6 +725,7 @@
   chrome.runtime.onMessage.addListener(onMessage);
   chrome.storage.onChanged.addListener(onStorageChanged);
   api.onState(syncUi);
+  api.onState((state) => { if (!state.spotlight) clearShown(); });
 
   Promise.all([
     chrome.storage.local.get({ cues: [] }).then(({ cues: list }) => setCues(list)),

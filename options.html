@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spotlight cues</title>
+  <link rel="stylesheet" href="cue-editor.css">
   <style>
     :root {
       --bg: #ffffff;
@@ -12,6 +13,7 @@
       --line: #ececf1;
       --chip: #f6f6f8;
       --card: #ffffff;
+      --seg-on: #ffffff;
       --accent: #7553ff;
       --danger: #c73852;
       --cue: #fd44b0;
@@ -25,6 +27,7 @@
         --line: #362d59;
         --chip: #2a2142;
         --card: #1f1633;
+        --seg-on: #362d59;
       }
     }
     * { box-sizing: border-box; }
@@ -46,35 +49,19 @@
     button.danger:hover { color: #fff; background: var(--danger); }
     .file input { display: none; }
 
-    h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 26px 0 8px; text-transform: none; }
-    .cue {
-      background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 10px;
-      display: grid; gap: 10px;
-    }
-    .cue.off { opacity: 0.6; }
-    .cue-head { display: flex; align-items: center; gap: 10px; }
-    .cue-head input[type="text"] { flex: 1; font-weight: 600; }
-    input[type="text"] {
-      font: inherit; color: var(--fg); background: var(--chip); border: 1px solid transparent; border-radius: 6px;
-      padding: 5px 8px; width: 100%; min-width: 0;
-    }
-    input[type="text"].invalid { border-color: var(--danger); }
-    .grid { display: grid; grid-template-columns: 90px 1fr; gap: 6px 12px; align-items: center; font-size: 13px; }
-    .grid > span { color: var(--muted); }
-    .url { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 6px; }
-    .detail { font-size: 12.5px; }
-    .detail code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--chip); padding: 1px 5px; border-radius: 4px; }
-    .toggles { display: flex; gap: 16px; flex-wrap: wrap; }
-    label.check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-    input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
-    .error { color: var(--danger); font-size: 12px; }
+    h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 26px 0 8px; }
     .empty { color: var(--muted); padding: 40px 0; text-align: center; border: 1px dashed var(--line); border-radius: 10px; }
     .hint { color: var(--muted); font-size: 12px; }
+    /* Roomier than the popup. */
+    .ce > summary { padding: 10px 12px; }
+    .ce-name { font-size: 14px; }
+    .ce-sum { font-size: 12px; }
+    .ce-body { padding: 12px 14px 14px; gap: 10px; }
+    .ce-row { grid-template-columns: 90px minmax(0, 1fr); font-size: 13px; }
+    .ce-area { max-width: 460px; }
 
     @media (max-width: 560px) {
-      .grid { grid-template-columns: 1fr; }
-      .grid > span { margin-top: 4px; }
-      .url { grid-template-columns: 1fr; }
+      .ce-row { grid-template-columns: 1fr; gap: 4px; }
     }
   </style>
 </head>
@@ -83,7 +70,7 @@
     <header>
       <div>
         <h1>Cues</h1>
-        <p>A cue turns the spotlight on when you click a specific element on matching pages, while cues are armed. Record cues from the Spotlight popup.</p>
+        <p>A cue turns the spotlight on when you click a specific element on matching pages, while cues are armed. Record, test and redraw cues from the <b>Cues</b> tab in the Spotlight popup.</p>
       </div>
       <div class="actions">
         <label class="file" title="Add cues from a JSON file">Import<input type="file" id="import" accept="application/json,.json"></label>
@@ -93,6 +80,7 @@
     <div id="message" class="hint" role="status"></div>
     <div id="list"></div>
   </main>
+  <script src="cue-editor.js"></script>
   <script src="options.js"></script>
 </body>
 </html>
