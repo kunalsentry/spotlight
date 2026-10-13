@@ -1101,6 +1101,7 @@
     }
     applyShape();
     applyEffect();
+    syncInstant();
   }
 
   const listeners = [
