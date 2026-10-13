@@ -43,6 +43,7 @@
     intensity: 70,     // 0..100, meaning depends on the effect
     autoZoomResize: true, // zoom in after resizing a placed spotlight with a handle
     autoZoomPlace: false, // zoom in as soon as the spotlight is placed (stops following)
+    instantZoom: false,
     inkColor: '#fd44b0',  // disappearing-ink colour (Sentry hot pink)
   };
   const MIN_SIZE = 60;
@@ -207,6 +208,8 @@
           pointer-events: auto; will-change: transform;
         }
         .on.pinned .toolbar { display: flex; }
+        .instant .toolbar, .instant .handles { display: none !important; }
+        .instant .ring .grab { pointer-events: none; }
         /* When the toolbar has to sit over the spotlight area ("inset"), it
            goes nearly transparent so it doesn't hide what's being shown;
            fully visible on hover/keyboard focus, and briefly ("peek") when it
@@ -292,6 +295,15 @@
     document.documentElement.appendChild(host);
     applyShape();
     applyEffect();
+    syncInstant();
+  }
+
+  function syncInstant() {
+    if (!rootEl) return;
+    const on = !!settings.instantZoom;
+    rootEl.classList.toggle('instant', on);
+    toolbarEl.style.display = on ? 'none' : '';
+    handlesEl.style.display = on ? 'none' : '';
   }
 
   // The hole: an SVG of the shape (black on transparent), feathered with a
@@ -514,7 +526,12 @@
       render();
       maskEl.getBoundingClientRect(); // flush styles so the fade-in runs
       rootEl.classList.add('on');
-      showHud('Click to place the spotlight', 2200);
+      if (settings.instantZoom) {
+        setPinned(true);
+        setZoom(true);
+      } else {
+        showHud('Click to place the spotlight', 2200);
+      }
       startLoop();
     } else {
       endDrag();
@@ -585,7 +602,7 @@
     const fit = Math.min((innerWidth - 2 * ZOOM_MARGIN) / w, (innerHeight - 2 * ZOOM_MARGIN) / h);
     const scale = clamp(Math.max(preferred, Math.min(fit, ZOOM_MIN_GAIN)), 1, Math.min(fit, MAX_ZOOM));
     const zh = h * scale;
-    const toolbarRoom = (toolbarSize.h || 34) + TOOLBAR_GAP + 8;
+    const toolbarRoom = settings.instantZoom ? 0 : (toolbarSize.h || 34) + TOOLBAR_GAP + 8;
     const to = { x: innerWidth / 2, y: innerHeight / 2 };
     const top = (innerHeight - zh) / 2;
     if (top < toolbarRoom) {
@@ -594,6 +611,27 @@
       if (shifted > top) to.y = shifted + zh / 2;
     }
     return { scale, to };
+  }
+
+  // Keep the scaled page covering the viewport: clamp the pan so the page's
+  // edges never come inside the window. If the page can't fill the window at
+  // this scale, centre it instead.
+  function clampGoal(goal) {
+    const s = goal.s;
+    const de = document.documentElement;
+    const docW = zoom.docW ?? Math.max(innerWidth, de.scrollWidth);
+    const docH = zoom.docH ?? Math.max(innerHeight, de.scrollHeight);
+    const sx = window.scrollX || 0;
+    const sy = window.scrollY || 0;
+    const minOx = innerWidth - s * (docW - sx);
+    const maxOx = s * sx;
+    const minOy = innerHeight - s * (docH - sy);
+    const maxOy = s * sy;
+    return {
+      s,
+      ox: minOx > maxOx ? (innerWidth - s * docW) / 2 : clamp(goal.ox, minOx, maxOx),
+      oy: minOy > maxOy ? (innerHeight - s * docH) / 2 : clamp(goal.oy, minOy, maxOy),
+    };
   }
 
   function beginZoom() {
@@ -605,6 +643,10 @@
     zoom.saved = ['transform', 'transform-origin', 'transition', 'will-change'].map((p) => [p, el.style.getPropertyValue(p), el.style.getPropertyPriority(p)]);
     zoom.view = { ...IDENTITY };
     zoom.animating = false;
+    // Unscaled document size, captured before the transform is applied (a
+    // scaled body inflates scrollWidth, which would defeat the clamp).
+    zoom.docW = Math.max(innerWidth, document.documentElement.scrollWidth);
+    zoom.docH = Math.max(innerHeight, document.documentElement.scrollHeight);
   }
 
   function restoreZoomStyle(prop) {
@@ -643,10 +685,10 @@
       endDrag();
       beginZoom();
       // Spotlight centre (page coords) -> plan.to on screen, at plan.scale.
-      zoom.goal = { ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale };
+      zoom.goal = clampGoal({ ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale });
       zoom.mode = 'in';
       rootEl.classList.add('zoomed');
-      showHud(`Zoomed to ${Math.round(plan.scale * 100)}%`, 1400);
+      if (!settings.instantZoom) showHud(`Zoomed to ${Math.round(plan.scale * 100)}%`, 1400);
     } else {
       if (!zoom.el || zoom.mode === 'out') return false;
       zoom.goal = { ...IDENTITY };
@@ -1011,7 +1053,7 @@
     clampPin();
     if (zoom.mode === 'in') {
       const plan = zoomPlan();
-      zoom.goal = { ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale };
+      zoom.goal = clampGoal({ ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale });
     }
     if (zoom.el) startLoop();
     if (inkStrokes.length) startInkLoop(); // resizing the canvas cleared it
@@ -1103,5 +1145,6 @@
     normalizeSettings();
     applyShape();
     applyEffect();
+    syncInstant();
   }).catch(() => {});
 })();

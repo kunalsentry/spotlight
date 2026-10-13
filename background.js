@@ -5,6 +5,21 @@
 
 const MENU_ID = 'toggle-spotlight';
 
+// Re-inject into tabs that were already open, so a reloaded extension replaces
+// the stale content script (and its on-page overlay) right away instead of
+// waiting for the tab to navigate. Tabs that can't be scripted are skipped.
+async function injectIntoOpenTabs() {
+  const tabs = await chrome.tabs.query({});
+  await Promise.all(tabs.map(async (tab) => {
+    if (tab.id == null || /^(chrome|edge|about|devtools|chrome-extension|chrome-untrusted):/i.test(tab.url || '')) return;
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+    } catch {
+      // no host access to this tab; it will be injected on demand instead
+    }
+  }));
+}
+
 // One plain item, so Chrome shows it directly in the page's right-click menu
 // (it only nests an extension's items in a submenu when there are several).
 // Items persist across service-worker restarts; recreate on install/reload,
@@ -12,7 +27,9 @@ const MENU_ID = 'toggle-spotlight';
 chrome.runtime.onInstalled.addListener(async () => {
   await chrome.contextMenus.removeAll();
   chrome.contextMenus.create({ id: MENU_ID, title: 'Spotlight', contexts: ['all'] });
+  injectIntoOpenTabs();
 });
+chrome.runtime.onStartup.addListener(injectIntoOpenTabs);
 
 // Send a message to the content script. Tabs that were already open when the
 // extension was installed/reloaded have no content script yet, so inject it
