@@ -8,6 +8,7 @@ const DEFAULTS = {
   intensity: 70,
   autoZoomResize: true,
   autoZoomPlace: false,
+  instantZoom: false,
   inkColor: '#fd44b0',
 };
 
@@ -78,6 +79,9 @@ function syncVisibility() {
   for (const btn of document.querySelectorAll('button[data-toggle]')) {
     btn.setAttribute('aria-pressed', String(!!settings[btn.dataset.toggle]));
   }
+  const instant = !!settings.instantZoom;
+  $('instantZoom').checked = instant;
+  for (const btn of $('zoomOptions').querySelectorAll('button')) btn.disabled = instant;
 }
 
 async function init() {
@@ -105,6 +109,8 @@ async function init() {
   for (const btn of document.querySelectorAll('button[data-toggle]')) {
     btn.addEventListener('click', () => save({ [btn.dataset.toggle]: !settings[btn.dataset.toggle] }));
   }
+
+  $('instantZoom').addEventListener('change', (e) => save({ instantZoom: e.target.checked }));
 
   for (const group of document.querySelectorAll('[data-setting]')) {
     group.addEventListener('click', (e) => {

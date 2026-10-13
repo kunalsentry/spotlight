@@ -55,6 +55,7 @@
     .row { display: grid; grid-template-columns: 56px 1fr; align-items: center; gap: 10px; }
     .row[hidden] { display: none; }
     .row > span { color: var(--muted); font-size: 12px; }
+    .row.instant { grid-template-columns: 80px 1fr; }
 
     .seg { display: flex; background: var(--chip); border-radius: 7px; padding: 2px; }
     .seg button {
@@ -67,6 +68,9 @@
     .seg.toggles { gap: 2px; }
     /* On/off toggles (each independent): solid accent when on. */
     .seg.toggles button[aria-pressed="true"] { background: var(--accent); color: #fff; box-shadow: none; }
+    .seg.toggles button:disabled { opacity: .4; pointer-events: none; }
+    .checkline { display: flex; align-items: center; gap: 7px; }
+    .checkline input { accent-color: var(--accent); margin: 0; }
     .swatches { display: flex; align-items: center; gap: 8px; padding: 3px 2px; }
     .swatches button, .swatches .custom {
       width: 18px; height: 18px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
@@ -143,11 +147,15 @@
     </div>
     <div class="row">
       <span title="Zoom in automatically">Zoom</span>
-      <div class="seg toggles">
+      <div class="seg toggles" id="zoomOptions">
         <button data-toggle="autoZoomPlace" title="Zoom in as soon as you click to place the spotlight">On place</button>
         <button data-toggle="autoZoomResize" title="Zoom in when you finish resizing the spotlight">After resize</button>
       </div>
     </div>
+    <label class="row instant">
+      <span title="Place the spotlight where the cursor is and zoom in straight away">Instant Zoom</span>
+      <span class="checkline"><input type="checkbox" id="instantZoom"> Zoom in where the cursor is</span>
+    </label>
   </div>
 
   <div class="foot">

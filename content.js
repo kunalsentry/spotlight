@@ -43,6 +43,7 @@
     intensity: 70,     // 0..100, meaning depends on the effect
     autoZoomResize: true, // zoom in after resizing a placed spotlight with a handle
     autoZoomPlace: false, // zoom in as soon as the spotlight is placed (stops following)
+    instantZoom: false,
     inkColor: '#fd44b0',  // disappearing-ink colour (Sentry hot pink)
   };
   const MIN_SIZE = 60;
@@ -514,7 +515,12 @@
       render();
       maskEl.getBoundingClientRect(); // flush styles so the fade-in runs
       rootEl.classList.add('on');
-      showHud('Click to place the spotlight', 2200);
+      if (settings.instantZoom) {
+        setPinned(true);
+        setZoom(true);
+      } else {
+        showHud('Click to place the spotlight', 2200);
+      }
       startLoop();
     } else {
       endDrag();
@@ -596,6 +602,36 @@
     return { scale, to };
   }
 
+  // Keep the spotlit box fully inside the window. Where that doesn't pull the
+  // box off-screen, pan no further than needed so the page still covers the
+  // window; otherwise prefer keeping the box visible.
+  function boxGoal(goal, bw, bh) {
+    const s = goal.s;
+    const de = document.documentElement;
+    const docW = zoom.docW ?? Math.max(innerWidth, de.scrollWidth);
+    const docH = zoom.docH ?? Math.max(innerHeight, de.scrollHeight);
+    const sx = window.scrollX || 0;
+    const sy = window.scrollY || 0;
+    const pageMinOx = innerWidth - s * (docW - sx);
+    const pageMaxOx = s * sx;
+    const pageMinOy = innerHeight - s * (docH - sy);
+    const pageMaxOy = s * sy;
+    const boxMinOx = ZOOM_MARGIN + (bw * s) / 2 - s * spot.pinX;
+    const boxMaxOx = innerWidth - ZOOM_MARGIN - (bw * s) / 2 - s * spot.pinX;
+    const boxMinOy = ZOOM_MARGIN + (bh * s) / 2 - s * spot.pinY;
+    const boxMaxOy = innerHeight - ZOOM_MARGIN - (bh * s) / 2 - s * spot.pinY;
+    const axis = (v, pageLo, pageHi, boxLo, boxHi) => {
+      const lo = Math.max(pageLo, boxLo);
+      const hi = Math.min(pageHi, boxHi);
+      return lo <= hi ? clamp(v, lo, hi) : v;
+    };
+    return {
+      s,
+      ox: axis(goal.ox, pageMinOx, pageMaxOx, boxMinOx, boxMaxOx),
+      oy: axis(goal.oy, pageMinOy, pageMaxOy, boxMinOy, boxMaxOy),
+    };
+  }
+
   function beginZoom() {
     if (zoom.el) return;
     const el = document.body || document.documentElement;
@@ -605,6 +641,10 @@
     zoom.saved = ['transform', 'transform-origin', 'transition', 'will-change'].map((p) => [p, el.style.getPropertyValue(p), el.style.getPropertyPriority(p)]);
     zoom.view = { ...IDENTITY };
     zoom.animating = false;
+    // Unscaled document size, captured before the transform is applied (a
+    // scaled body inflates scrollWidth, which would defeat the clamp).
+    zoom.docW = Math.max(innerWidth, document.documentElement.scrollWidth);
+    zoom.docH = Math.max(innerHeight, document.documentElement.scrollHeight);
   }
 
   function restoreZoomStyle(prop) {
@@ -643,7 +683,8 @@
       endDrag();
       beginZoom();
       // Spotlight centre (page coords) -> plan.to on screen, at plan.scale.
-      zoom.goal = { ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale };
+      const { w, h } = drawn ?? shapeSize();
+      zoom.goal = boxGoal({ ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale }, w, h);
       zoom.mode = 'in';
       rootEl.classList.add('zoomed');
       showHud(`Zoomed to ${Math.round(plan.scale * 100)}%`, 1400);
@@ -1011,7 +1052,8 @@
     clampPin();
     if (zoom.mode === 'in') {
       const plan = zoomPlan();
-      zoom.goal = { ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale };
+      const { w, h } = drawn ?? shapeSize();
+      zoom.goal = boxGoal({ ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale }, w, h);
     }
     if (zoom.el) startLoop();
     if (inkStrokes.length) startInkLoop(); // resizing the canvas cleared it
