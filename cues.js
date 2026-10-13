@@ -42,6 +42,9 @@
   const STABLE_POLLS = 3;         // its box must stay put this many polls in a row
   const DEFAULT_TIMEOUT = 3000;
   const TEST_ATTRS = ['data-test-id', 'data-testid', 'data-test', 'data-cy', 'data-qa'];
+  // TEMP: explain failed element picks: the reason on the HUD, and every
+  // strategy tried (with match counts) in the page's DevTools console.
+  const PICK_DEBUG = true;
   const INTERACTIVE = 'a[href], button, input, select, textarea, summary, label, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], [role="checkbox"], [role="radio"], [role="switch"], [role="treeitem"], [onclick]';
 
   let cues = [];
@@ -94,13 +97,15 @@
     return role ? `[role="${CSS.escape(role)}"]` : el.localName;
   }
 
-  // nth-of-type path up from the nearest ancestor with a stable id or test id.
-  function cssPath(el) {
+  // nth-of-type path up from the nearest ancestor with a stable id or test id
+  // (`anchored`), or all the way from <html>, which always finds just this
+  // element (for when the anchoring ancestor itself isn't unique).
+  function cssPath(el, anchored = true) {
     const parts = [];
     for (let node = el; node && node !== document.documentElement; node = node.parentElement) {
-      const testAttr = TEST_ATTRS.find((a) => node.hasAttribute(a));
+      const testAttr = anchored && TEST_ATTRS.find((a) => node.hasAttribute(a));
       if (node !== el && testAttr) { parts.unshift(`[${testAttr}="${CSS.escape(node.getAttribute(testAttr))}"]`); break; }
-      if (node !== el && stableId(node.id)) { parts.unshift(`#${CSS.escape(node.id)}`); break; }
+      if (anchored && node !== el && stableId(node.id)) { parts.unshift(`#${CSS.escape(node.id)}`); break; }
       let part = node.localName;
       const parent = node.parentElement;
       if (parent) {
@@ -112,15 +117,24 @@
     return parts.join(' > ');
   }
 
-  function query(strategy) {
+  // Hidden duplicates (a collapsed and an expanded sidebar, desktop and
+  // mobile copies of a toolbar) don't count when a visible one matches.
+  const isVisible = (el) => (el.checkVisibility ? el.checkVisibility() : el.getClientRects().length > 0);
+
+  function queryAll(strategy) {
     let found;
-    try { found = [...document.querySelectorAll(strategy.sel)]; } catch { return []; }
+    try { found = [...document.querySelectorAll(strategy.sel)]; } catch { return null; } // invalid selector
     return strategy.name == null ? found : found.filter((el) => accName(el) === strategy.name);
   }
 
+  function query(strategy) {
+    const found = queryAll(strategy) ?? [];
+    return found.length > 1 ? found.filter(isVisible) : found;
+  }
+
   // Every strategy that finds exactly this element, best first. Empty when
-  // the element can't be told apart from others.
-  function fingerprint(el) {
+  // the element can't be told apart from others. `explain`: log why not.
+  function fingerprint(el, { explain = false } = {}) {
     const name = accName(el);
     const testAttr = TEST_ATTRS.find((a) => el.hasAttribute(a));
     const testSel = testAttr && `[${testAttr}="${CSS.escape(el.getAttribute(testAttr))}"]`;
@@ -133,13 +147,51 @@
       if (el.getAttribute('role') || !['div', 'span'].includes(roleSel)) candidates.push({ kind: 'role + name', sel: roleSel, name });
       if (el.getAttribute('role') && !['div', 'span'].includes(el.localName)) candidates.push({ kind: 'tag + name', sel: el.localName, name });
     }
-    candidates.push({ kind: 'path', sel: cssPath(el) });
+    const path = cssPath(el);
+    candidates.push({ kind: 'path', sel: path });
+    const fullPath = cssPath(el, false);
+    if (fullPath !== path) candidates.push({ kind: 'full path', sel: fullPath });
     const unique = candidates.filter((s) => {
       const found = query(s);
       return found.length === 1 && found[0] === el;
     });
+    if (!unique.length && explain && PICK_DEBUG) report(el, candidates);
     return unique.slice(0, 4);
   }
+
+  // TEMP (PICK_DEBUG): why an element couldn't be identified.
+  function whyNot(el, candidates) {
+    if (!el.isConnected) return 'it was removed from the page as you clicked (the page re-rendered it)';
+    if (el.getRootNode() !== document) return 'it’s inside a shadow root, which selectors can’t reach';
+    const counts = candidates.map((s) => query(s));
+    if (counts.every((f) => f.length > 1)) return `${Math.min(...counts.map((f) => f.length))}+ visible elements look the same`;
+    if (counts.every((f) => !f.includes(el))) return 'none of its selectors find it again';
+    return 'every selector finds a different or extra element';
+  }
+
+  function report(el, candidates) {
+    const reason = whyNot(el, candidates);
+    /* eslint-disable no-console */
+    console.groupCollapsed(`[Spotlight cues] Can’t identify element: ${reason}`);
+    console.log('Element:', el, { connected: el.isConnected, inShadowRoot: el.getRootNode() !== document, visible: isVisible(el), tag: el.localName, id: el.id, attributes: [...el.attributes].map((a) => `${a.name}="${a.value.slice(0, 60)}"`) });
+    console.table(candidates.map((s) => {
+      const all = queryAll(s);
+      const found = query(s);
+      return {
+        kind: s.kind,
+        selector: s.sel,
+        name: s.name ?? '',
+        matches: all == null ? 'invalid selector' : all.length,
+        visibleMatches: all == null ? '' : all.filter(isVisible).length,
+        includesElement: !!all?.includes(el),
+        used: found.length === 1 && found[0] === el,
+      };
+    }));
+    console.groupEnd();
+    /* eslint-enable no-console */
+    lastFailure = reason;
+  }
+  let lastFailure = '';
 
   // The element a fingerprint identifies now, or null.
   function resolve(fp) {
@@ -375,14 +427,61 @@
   // Capture phase on window, registered after content.js's listeners: the
   // click that places a following spotlight is swallowed there and never
   // reaches us. Never prevents the page's own handling of the click.
+  // A press: what pointerdown saw, finished by the click. Some pages
+  // re-render the pressed element on mousedown/pointerdown; then the element
+  // the click lands on isn't the one that was pressed, or (when it was
+  // replaced) no click arrives at all. So pointerdown, which runs before the
+  // page's handlers, notes the element, its trigger match and so on, and
+  // pointerup finishes the press itself if no click follows.
+  let press = null; // { t, x, y, timer, el, fp } (picking) or { ..., cue, ends }
+  const PRESS_SLOP = 10;    // px the pointer may move and still be a click
+  const CLICK_WAIT = 120;   // ms after pointerup to wait for the click
+  const PRESS_MAX_AGE = 2000;
+
+  function onPress(e) {
+    if (press) clearTimeout(press.timer);
+    press = null;
+    if (!e.isTrusted || e.button !== 0 || !(e.target instanceof Element) || api.isOverlay(e)) return;
+    press = { t: performance.now(), x: e.clientX, y: e.clientY, timer: 0 };
+    if (picking()) {
+      press.el = triggerElement(e.target);
+      press.fp = fingerprint(press.el);
+    } else if (!rec) {
+      press.ends = !!shown && endsCue(e);
+      press.cue = armed ? cueForClick(e.target) : null;
+    }
+  }
+
+  function onRelease(e) {
+    const p = press;
+    if (!p) return;
+    if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > PRESS_SLOP) { press = null; return; }
+    p.timer = setTimeout(() => {
+      if (press !== p) return; // the click arrived
+      press = null;
+      act(null, p);
+    }, CLICK_WAIT);
+  }
+
   function onClick(e) {
     if (!e.isTrusted || e.button !== 0 || api.isOverlay(e)) return;
-    if (rec) { onRecordClick(e); return; }
-    if (!(e.target instanceof Element)) return;
+    const p = press;
+    press = null;
+    if (p) clearTimeout(p.timer);
+    act(e, p && performance.now() - p.t < PRESS_MAX_AGE ? p : null);
+  }
+
+  // A click (e), or a press whose click never came (e null).
+  function act(e, p) {
+    const target = e?.target instanceof Element ? e.target : null;
+    if (rec) {
+      if (picking()) pickElement(e, target, p);
+      return;
+    }
     // End the showing cue first; this click may also trigger another one.
-    if (shown && endsCue(e)) api.setSpotlight(false);
+    if (shown && ((e && target && endsCue(e)) || p?.ends)) api.setSpotlight(false);
     if (!armed) return;
-    const cue = cueForClick(e.target);
+    const cue = (target && cueForClick(target)) || p?.cue;
     if (!cue) return;
     // If this click loads another page, the new page finishes the cue.
     try { sessionStorage.setItem(PENDING_KEY, JSON.stringify({ id: cue.id, t: Date.now() })); } catch { /* storage blocked */ }
@@ -499,15 +598,17 @@
     ui.pickLabel.textContent = describe(el);
   }
 
-  function onRecordClick(e) {
-    if (!picking() || !(e.target instanceof Element)) return;
-    const el = triggerElement(e.target);
-    const fp = fingerprint(el);
+  // The element picked: the one clicked, or else the one pressed (see onPress).
+  function pickElement(e, target, p) {
+    let el = target && triggerElement(target);
+    let fp = el ? fingerprint(el, { explain: !p?.fp?.length }) : [];
+    if (!fp.length && p?.fp?.length) ({ el, fp } = p);
     if (!fp.length) {
+      if (!el && p?.el) fingerprint(p.el, { explain: true });
       // Can't tell it apart from similar elements: don't click it, try again.
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      api.showHud('Can’t identify that element. Try a nearby one.', 2200);
+      e?.preventDefault();
+      e?.stopImmediatePropagation();
+      api.showHud(PICK_DEBUG && lastFailure ? `Can’t identify that element: ${lastFailure}. Details in the console.` : 'Can’t identify that element. Try a nearby one.', PICK_DEBUG ? 5000 : 2200);
       return;
     }
     if (rec.step === 'pick') {
@@ -738,6 +839,8 @@
   const listeners = [
     [window, 'click', onClick, { capture: true }],
     [window, 'mousemove', onRecordMove, { capture: true, passive: true }],
+    [window, 'pointerdown', onPress, { capture: true, passive: true }],
+    [window, 'pointerup', onRelease, { capture: true, passive: true }],
     [window, 'keydown', onKeyDown, { capture: true }],
   ];
 
@@ -746,6 +849,7 @@
     for (const [target, type, fn, opts] of listeners) target.removeEventListener(type, fn, opts);
     stopRun();
     clearShown();
+    if (press) clearTimeout(press.timer);
     ui?.root.remove();
     try {
       chrome.runtime.onMessage.removeListener(onMessage);
