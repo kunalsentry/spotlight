@@ -1135,6 +1135,19 @@
     if (e.type === 'click' || e.type === 'contextmenu') blockGesture = false;
   }
 
+  // A non-passive wheel listener makes every scroll wait for the page's main
+  // thread, which slows scrolling (and the shared video) on busy pages. So
+  // it's only there while it can block: blockOutside on a placed spotlight.
+  const WHEEL_OPTS = { capture: true, passive: false };
+  let wheelOn = false;
+  function syncWheel() {
+    const want = settings.blockOutside && spot.active && spot.pinned;
+    if (want === wheelOn) return;
+    wheelOn = want;
+    if (want) window.addEventListener('wheel', onBlockable, WHEEL_OPTS);
+    else window.removeEventListener('wheel', onBlockable, WHEEL_OPTS);
+  }
+
   function onResize() {
     sizeInk();
     clampPin();
@@ -1159,6 +1172,7 @@
   }
 
   function reportState() {
+    syncWheel();
     for (const fn of stateListeners) fn(getState());
     try {
       chrome.runtime.sendMessage({ type: 'state', state: getState() }).catch(() => {});
@@ -1183,6 +1197,7 @@
       if (key in DEFAULTS) settings[key] = newValue ?? DEFAULTS[key];
     }
     normalizeSettings();
+    syncWheel();
     // A new size or shape from the popup replaces any handle resize, and
     // counts as a spotlight interaction, so it zooms out.
     if (changes.width || changes.height || changes.shape) {
@@ -1204,7 +1219,6 @@
     [window, 'mouseup', onSwallowable, { capture: true }],
     [window, 'click', onSwallowable, { capture: true }],
     ...['mousedown', 'pointerup', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu'].map((type) => [window, type, onBlockable, { capture: true }]),
-    [window, 'wheel', onBlockable, { capture: true, passive: false }],
     [window, 'resize', onResize, { passive: true }],
     [window, 'keydown', onKeyDown, { capture: true }],
     [window, 'keyup', onKeyUp, { capture: true }],
@@ -1214,6 +1228,7 @@
   function teardown() {
     document.removeEventListener(TEARDOWN_EVENT, teardown);
     for (const [target, type, fn, opts] of listeners) target.removeEventListener(type, fn, opts);
+    window.removeEventListener('wheel', onBlockable, WHEEL_OPTS);
     cancelAnimationFrame(rafId);
     clearTimeout(hudTimer);
     clearTimeout(swallowTimer);
