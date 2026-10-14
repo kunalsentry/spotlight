@@ -72,7 +72,10 @@
     x: mouse.x, y: mouse.y,       // rendered centre
     pinX: mouse.x, pinY: mouse.y, // placed centre
   };
-  let painted = null;            // { key, w, h, Ew, Eh }: the hole size the mask was built for, and the layer's size
+  let painted = null;            // { key, w, h, Ew, Eh, … }: the hole size the mask on screen was built for, and the layer's size
+  let pendingMask = null;        // the latest mask requested, while it decodes (see paintMask)
+  let maskSeq = 0;
+  let fadeInWaiting = false;     // turned on, waiting for its mask before fading in
   let ringKey = '';              // geometry the outline/handles were last laid out for
   let blurPx = 0;                // backdrop blur radius for the current effect (0: none)
   let backdropFilter = '';       // backdrop-filter currently applied to the mask layer
@@ -346,7 +349,8 @@
     // layer by the small remainder. Never scale the layer (far larger than the
     // screen) up a lot: Chrome then rasters it at that higher resolution, can
     // run short of tile memory and drop parts of the mask, so the hole flickers.
-    if (!zoom.animating || !painted || Math.abs(w / painted.w - 1) > MASK_RESCALE) paintMask(w, h);
+    const last = pendingMask ?? painted; // the newest mask asked for
+    if (!zoom.animating || !last || Math.abs(w / last.w - 1) > MASK_RESCALE) paintMask(w, h);
     paintRing(w, h);
   }
 
@@ -354,9 +358,19 @@
   // (plus a margin for the small zoom remainder), so wherever render() moves
   // it, it still covers the screen. Moving is then a transform the compositor
   // applies; only a size change repaints the mask.
+  //
+  // Chrome decodes a newly referenced mask image asynchronously, and until
+  // it has, the layer counts as empty: no hole at all for a frame or two, so
+  // the spotlit area flickers dim (worst with cues, which nearly always bring
+  // a new size). So each new mask is decoded first and swapped in once ready;
+  // meanwhile render() keeps scaling the current one.
   function paintMask(w, h) {
     const key = `${w},${h},${shape()},${innerWidth},${innerHeight}`;
-    if (painted?.key === key) return;
+    if (painted?.key === key) {
+      pendingMask = null; // back to the mask on screen: drop any still decoding
+      return;
+    }
+    if (pendingMask?.key === key) return;
     const { rx, ry } = cornerRadii(w, h);
     const soft = SOFT_EDGE;
     const pad = soft * 2;
@@ -369,13 +383,42 @@
       : '';
     const svg = `<svg xmlns="${SVG_NS}" width="${W}" height="${H}">${filter}`
       + `<rect x="${pad}" y="${pad}" width="${w}" height="${h}" rx="${rx}" ry="${ry}" fill="#000"${soft ? ' filter="url(#f)"' : ''}/></svg>`;
+    const url = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+    const next = { key, w, h, W, H, Ew, Eh, url, seq: ++maskSeq };
+    pendingMask = next;
+    const img = new Image();
+    img.src = url;
+    // Once decoded, the CSS reference to the same URL finds it ready. Apply
+    // it unless the request was dropped, or a later one already landed; one
+    // that's since been superseded still lands, so a continuous resize keeps
+    // updating rather than waiting for the pointer to stop.
+    img.decode().catch(() => {}).then(() => {
+      if (!pendingMask || next.seq <= (painted?.seq ?? 0)) return;
+      if (pendingMask === next) pendingMask = null;
+      applyMask(next);
+    });
+  }
+
+  function applyMask(m) {
+    if (!host?.isConnected) return; // torn down meanwhile
     const st = maskEl.style;
-    st.width = `${Ew}px`;
-    st.height = `${Eh}px`;
-    st.maskImage = `url("data:image/svg+xml,${encodeURIComponent(svg)}"), linear-gradient(#000, #000)`;
-    st.maskSize = `${W}px ${H}px, 100% 100%`;
-    st.maskPosition = `${(Ew - W) / 2}px ${(Eh - H) / 2}px, 0 0`;
-    painted = { key, w, h, Ew, Eh };
+    st.width = `${m.Ew}px`;
+    st.height = `${m.Eh}px`;
+    st.maskImage = `url("${m.url}"), linear-gradient(#000, #000)`;
+    st.maskSize = `${m.W}px ${m.H}px, 100% 100%`;
+    st.maskPosition = `${(m.Ew - m.W) / 2}px ${(m.Eh - m.H) / 2}px, 0 0`;
+    painted = m;
+    render();
+    if (fadeInWaiting && !pendingMask) fadeIn();
+  }
+
+  // Fade the spotlight in, once its mask is on: shown before that, it would
+  // start out with no hole.
+  function fadeIn() {
+    fadeInWaiting = !!pendingMask || !painted;
+    if (fadeInWaiting || !spot.active) return;
+    maskEl.getBoundingClientRect(); // flush styles so the fade-in runs
+    rootEl.classList.add('on');
   }
 
   // Outline, grab zone and resize handles, at the on-screen size so stroke
@@ -458,7 +501,11 @@
     const { x, y, w, h } = visual();
     // Centre the layer (and its hole) on the spotlight; mid-zoom, scale it by
     // the small remainder since the hole was last rebuilt (see paint()).
-    const k = w / painted.w;
+    // While a new mask decodes, the current one can be far off the new size
+    // (a cue jumping to another area). Scaled down much, the layer would no
+    // longer cover the screen, so for those few frames the hole is drawn too
+    // large instead.
+    const k = Math.max(w / painted.w, 0.96);
     maskEl.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${k}) translate(${-painted.Ew / 2}px, ${-painted.Eh / 2}px)`;
     // The backdrop blur scales with the layer, so counter that to keep the
     // blur constant. Only a compositor property change, no repaint.
@@ -516,13 +563,13 @@
       spot.x = mouse.x;
       spot.y = mouse.y;
       render();
-      maskEl.getBoundingClientRect(); // flush styles so the fade-in runs
-      rootEl.classList.add('on');
+      fadeIn();
       showHud('Click to place the spotlight', 2200);
       startLoop();
     } else {
       endDrag();
       if (zoom.el) setZoom(false);
+      fadeInWaiting = false;
       rootEl?.classList.remove('on', 'pinned');
       spot.pinned = false;
       hudEl?.classList.remove('show');
@@ -560,10 +607,7 @@
     hudEl.classList.remove('show');
     measureToolbar();
     applyShape(true);
-    if (!wasActive) {
-      maskEl.getBoundingClientRect(); // flush styles so the fade-in runs
-      rootEl.classList.add('on');
-    }
+    if (!wasActive) fadeIn();
     peekToolbar();
     startLoop();
     if (zoomIn) setZoom(true, { quiet: true });
