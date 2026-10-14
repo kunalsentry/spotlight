@@ -52,9 +52,14 @@
   const SOFT_EDGE = 6;      // px of feathering on the spotlight edge
   const GRAB_WIDTH = 18;    // px of the edge you can grab to drag
   const RING_MARGIN = 12;   // room around the shape inside the ring SVG
-  const FOLLOW_EASE = 0.35; // per-frame easing toward the cursor
-  const SIZE_EASE = 0.2;    // per-frame easing toward a new size
-  const ZOOM_EASE = 0.16;   // per-frame easing of the zoom animation
+  // Easing is cut short once what's left is under a pixel: those last frames
+  // barely move anything but still change pixels in a shared tab's video.
+  const FOLLOW_EASE = 0.35; // per-frame easing toward the cursor…
+  const FOLLOW_SNAP = 0.5;  // …until this close (px)
+  const SIZE_EASE = 0.2;    // per-frame easing toward a new size…
+  const SIZE_SNAP = 1;      // …until this close (px)
+  // Every frame of a zoom changes the whole screen, so keep it short.
+  const ZOOM_MS = 280;      // duration of the zoom animation
   const ZOOM_FILL = 0.8;    // preferred: the zoomed spotlight fills 80% of the window, keeping context
   const ZOOM_MIN_GAIN = 1.25; // large spotlights still zoom at least this much, if it fits
   const ZOOM_MARGIN = 12;   // px kept clear between a zoomed spotlight and the window edge
@@ -92,9 +97,10 @@
   let drawn = null;              // size currently on screen, eases toward shapeSize()
   let drag = null;               // { pointerId, offX, offY } while dragging
   // The zoom is one view transform: a page point v (in normal, unzoomed
-  // viewport coordinates) is shown at  screen = o + s·v.  `view` eases toward
-  // `goal` each frame, all components by the same fraction, so any point that
-  // starts and ends at the same screen spot stays put throughout. The
+  // viewport coordinates) is shown at  screen = o + s·v.  `view` moves from
+  // `from` to `goal` over ZOOM_MS from `start`, all components by the same
+  // fraction, so any point that starts and ends at the same screen spot stays
+  // put throughout. The
   // spotlight's own coordinates (spot.*) are page coordinates.
   //   mode 'in'       zoomed in on the spotlight
   //   mode 'anchored' back at normal size, offset so the point under the
@@ -103,7 +109,7 @@
   // `base` is <body>'s unscaled top-left; `saved` its inline transform
   // styles, restored when the zoom ends.
   const IDENTITY = { ox: 0, oy: 0, s: 1 };
-  const zoom = { mode: 'none', view: { ...IDENTITY }, goal: { ...IDENTITY }, el: null, base: null, saved: null, animating: false };
+  const zoom = { mode: 'none', view: { ...IDENTITY }, from: { ...IDENTITY }, goal: { ...IDENTITY }, start: 0, el: null, base: null, saved: null, animating: false };
   let swallowClick = false;      // eat the rest of the click that placed the spotlight
   let swallowTimer = 0;
   let blockGesture = false;      // eat the rest of a press blocked outside the spotlight
@@ -381,8 +387,9 @@
     const pad = soft * 2;
     const W = w + pad * 2;
     const H = h + pad * 2;
-    const Ew = Math.ceil(2.1 * innerWidth + W);
-    const Eh = Math.ceil(2.1 * innerHeight + H);
+    // Even, so the hole sits a whole number of px from the layer's edge.
+    const Ew = 2 * Math.ceil((2.1 * innerWidth + W) / 2);
+    const Eh = 2 * Math.ceil((2.1 * innerHeight + H) / 2);
     const filter = soft
       ? `<filter id="f" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="${soft / 2}"/></filter>`
       : '';
@@ -513,13 +520,18 @@
     // longer cover the screen, so for those few frames the hole is drawn too
     // large instead.
     const k = Math.max(w / painted.w, 0.96);
-    maskEl.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${k}) translate(${-painted.Ew / 2}px, ${-painted.Eh / 2}px)`;
+    // Positions are rounded to device pixels: at a fractional offset Chrome
+    // resamples the layer, so its soft edge would change on every frame of a
+    // move and cost bitrate in a shared tab's video.
+    const dpr = window.devicePixelRatio || 1;
+    const px = (v) => Math.round(v * dpr) / dpr;
+    maskEl.style.transform = `translate3d(${px(x - (k * painted.Ew) / 2)}px, ${px(y - (k * painted.Eh) / 2)}px, 0) scale(${k})`;
     // The backdrop blur scales with the layer, so counter that to keep the
     // blur constant. Only a compositor property change, no repaint.
     const filter = blurPx ? `blur(${(blurPx / k).toFixed(2)}px)` : 'none';
     if (filter !== backdropFilter) maskEl.style.backdropFilter = backdropFilter = filter;
-    ringEl.style.transform = `translate3d(${x - w / 2 - RING_MARGIN}px, ${y - h / 2 - RING_MARGIN}px, 0)`;
-    handlesEl.style.transform = `translate3d(${x - w / 2}px, ${y - h / 2}px, 0)`;
+    ringEl.style.transform = `translate3d(${px(x - w / 2 - RING_MARGIN)}px, ${px(y - h / 2 - RING_MARGIN)}px, 0)`;
+    handlesEl.style.transform = `translate3d(${px(x - w / 2)}px, ${px(y - h / 2)}px, 0)`;
 
     if (spot.pinned) {
       // Sit above the spotlight, or below it when there's no room at the top.
@@ -534,7 +546,7 @@
       else top = y - h / 2 + 8;
       top = clamp(top, 8, innerHeight - th - 8);
       const left = clamp(x - tw / 2, 8, innerWidth - tw - 8);
-      toolbarEl.style.transform = `translate3d(${left}px, ${top}px, 0)`;
+      toolbarEl.style.transform = `translate3d(${px(left)}px, ${px(top)}px, 0)`;
       const overlaps = left < x + w / 2 && left + tw > x - w / 2 && top < y + h / 2 && top + th > y - h / 2;
       toolbarEl.classList.toggle('inset', overlaps);
       hudEl.classList.toggle('top', top > innerHeight / 2);
@@ -732,13 +744,13 @@
       endDrag();
       beginZoom();
       // Spotlight centre (page coords) -> plan.to on screen, at plan.scale.
-      zoom.goal = { ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale };
+      zoomTo({ ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale });
       zoom.mode = 'in';
       rootEl.classList.add('zoomed');
       showHud(`Zoomed to ${Math.round(plan.scale * 100)}%`, 1400);
     } else {
       if (!zoom.el || zoom.mode === 'out') return false;
-      zoom.goal = { ...IDENTITY };
+      zoomTo({ ...IDENTITY });
       zoom.mode = 'out';
     }
     syncZoomButton();
@@ -754,25 +766,30 @@
   function anchorZoomOut(px, py) {
     if (!zoom.el) return;
     const p = toPage(px, py);
-    zoom.goal = { ox: px - p.x, oy: py - p.y, s: 1 };
+    zoomTo({ ox: px - p.x, oy: py - p.y, s: 1 });
     zoom.mode = 'anchored';
     syncZoomButton();
     startLoop();
     reportState();
   }
 
+  // Animate from wherever the view is now (possibly mid-animation) to `goal`.
+  function zoomTo(goal) {
+    zoom.from = { ...zoom.view };
+    zoom.goal = goal;
+    zoom.start = performance.now();
+  }
+
   // Returns true while still animating.
   function stepZoom() {
     const v = zoom.view;
-    const g = zoom.goal;
-    const moving = Math.abs(g.s - v.s) > 0.0005 || Math.abs(g.ox - v.ox) > 0.1 || Math.abs(g.oy - v.oy) > 0.1;
-    if (moving) {
-      v.s += (g.s - v.s) * ZOOM_EASE;
-      v.ox += (g.ox - v.ox) * ZOOM_EASE;
-      v.oy += (g.oy - v.oy) * ZOOM_EASE;
-    } else {
-      Object.assign(v, g);
-    }
+    const { from: f, goal: g } = zoom;
+    const t = clamp((performance.now() - zoom.start) / ZOOM_MS, 0, 1);
+    const moving = t < 1;
+    const e = 1 - (1 - t) ** 3; // ease-out
+    v.s = f.s + (g.s - f.s) * e;
+    v.ox = f.ox + (g.ox - f.ox) * e;
+    v.oy = f.oy + (g.oy - f.oy) * e;
 
     if (!moving && zoom.mode === 'out') {
       endZoom();
@@ -803,7 +820,7 @@
       if (value) el.style.setProperty(prop, value, priority);
       else el.style.removeProperty(prop);
     }
-    Object.assign(zoom, { mode: 'none', view: { ...IDENTITY }, goal: { ...IDENTITY }, el: null, base: null, saved: null, animating: false });
+    Object.assign(zoom, { mode: 'none', view: { ...IDENTITY }, from: { ...IDENTITY }, goal: { ...IDENTITY }, start: 0, el: null, base: null, saved: null, animating: false });
     rootEl?.classList.remove('zoomed');
   }
 
@@ -920,7 +937,7 @@
     const ty = spot.pinned ? spot.pinY : m.y;
     const dx = tx - spot.x;
     const dy = ty - spot.y;
-    if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
+    if (Math.abs(dx) > FOLLOW_SNAP || Math.abs(dy) > FOLLOW_SNAP) {
       spot.x += dx * FOLLOW_EASE;
       spot.y += dy * FOLLOW_EASE;
       moving = true;
@@ -933,7 +950,7 @@
       const target = shapeSize();
       const dw = target.w - drawn.w;
       const dh = target.h - drawn.h;
-      if (Math.abs(dw) > 0.5 || Math.abs(dh) > 0.5) {
+      if (Math.abs(dw) > SIZE_SNAP || Math.abs(dh) > SIZE_SNAP) {
         drawShape(drawn.w + dw * SIZE_EASE, drawn.h + dh * SIZE_EASE);
         moving = true;
       } else if (dw || dh) {
@@ -1135,12 +1152,25 @@
     if (e.type === 'click' || e.type === 'contextmenu') blockGesture = false;
   }
 
+  // A non-passive wheel listener makes every scroll wait for the page's main
+  // thread, which slows scrolling (and the shared video) on busy pages. So
+  // it's only there while it can block: blockOutside on a placed spotlight.
+  const WHEEL_OPTS = { capture: true, passive: false };
+  let wheelOn = false;
+  function syncWheel() {
+    const want = settings.blockOutside && spot.active && spot.pinned;
+    if (want === wheelOn) return;
+    wheelOn = want;
+    if (want) window.addEventListener('wheel', onBlockable, WHEEL_OPTS);
+    else window.removeEventListener('wheel', onBlockable, WHEEL_OPTS);
+  }
+
   function onResize() {
     sizeInk();
     clampPin();
     if (zoom.mode === 'in') {
       const plan = zoomPlan();
-      zoom.goal = { ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale };
+      zoomTo({ ox: plan.to.x - plan.scale * spot.pinX, oy: plan.to.y - plan.scale * spot.pinY, s: plan.scale });
     }
     if (zoom.el) startLoop();
     if (inkStrokes.length) startInkLoop(); // resizing the canvas cleared it
@@ -1159,6 +1189,7 @@
   }
 
   function reportState() {
+    syncWheel();
     for (const fn of stateListeners) fn(getState());
     try {
       chrome.runtime.sendMessage({ type: 'state', state: getState() }).catch(() => {});
@@ -1183,6 +1214,7 @@
       if (key in DEFAULTS) settings[key] = newValue ?? DEFAULTS[key];
     }
     normalizeSettings();
+    syncWheel();
     // A new size or shape from the popup replaces any handle resize, and
     // counts as a spotlight interaction, so it zooms out.
     if (changes.width || changes.height || changes.shape) {
@@ -1204,7 +1236,6 @@
     [window, 'mouseup', onSwallowable, { capture: true }],
     [window, 'click', onSwallowable, { capture: true }],
     ...['mousedown', 'pointerup', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu'].map((type) => [window, type, onBlockable, { capture: true }]),
-    [window, 'wheel', onBlockable, { capture: true, passive: false }],
     [window, 'resize', onResize, { passive: true }],
     [window, 'keydown', onKeyDown, { capture: true }],
     [window, 'keyup', onKeyUp, { capture: true }],
@@ -1214,6 +1245,7 @@
   function teardown() {
     document.removeEventListener(TEARDOWN_EVENT, teardown);
     for (const [target, type, fn, opts] of listeners) target.removeEventListener(type, fn, opts);
+    window.removeEventListener('wheel', onBlockable, WHEEL_OPTS);
     cancelAnimationFrame(rafId);
     clearTimeout(hudTimer);
     clearTimeout(swallowTimer);
