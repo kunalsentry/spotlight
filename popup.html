@@ -172,7 +172,7 @@
     </div>
     <label class="row">
       <span>Strength</span>
-      <div class="slider"><input type="range" id="intensity" min="0" max="100" step="5"><output id="intensityOut"></output></div>
+      <div class="slider"><input type="range" id="strength" min="0" max="100" step="1"><output id="strengthOut"></output></div>
     </label>
     <div class="row">
       <span>Ink</span>
@@ -190,6 +190,13 @@
       <div class="seg toggles">
         <button data-toggle="autoZoomPlace" title="Zoom in as soon as you click to place the spotlight">On place</button>
         <button data-toggle="autoZoomResize" title="Zoom in when you finish resizing the spotlight">After resize</button>
+      </div>
+    </div>
+    <div class="row">
+      <span title="Clicks outside a placed spotlight">Outside</span>
+      <div class="seg toggles">
+        <button data-toggle="blockOutside" title="Keep clicks and scrolling outside a placed spotlight from reaching the page">Block clicks</button>
+        <button data-toggle="closeOnOutside" title="Turn the spotlight off when you click outside it">Click closes</button>
       </div>
     </div>
   </div>

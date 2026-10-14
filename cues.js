@@ -454,7 +454,7 @@
       press.fp = fingerprint(press.el);
     } else if (!rec) {
       press.ends = !!shown && endsCue(e);
-      press.cue = armed ? cueForClick(e.target) : null;
+      press.cue = armed && !api.isBlocked(e) ? cueForClick(e.target) : null;
     }
   }
 
@@ -486,7 +486,8 @@
     }
     // End the showing cue first; this click may also trigger another one.
     if (shown && ((e && target && endsCue(e)) || p?.ends)) api.setSpotlight(false);
-    if (!armed) return;
+    // A click the spotlight kept from the page (blockOutside) triggers nothing.
+    if (!armed || api.isBlocked(e)) return;
     const cue = (target && cueForClick(target)) || p?.cue;
     if (!cue) return;
     // If this click loads another page, the new page finishes the cue.
@@ -520,6 +521,11 @@
     .cue-bar button.save:hover { background: #6a5fc1; }
     .cue-bar button:disabled { opacity: 0.4; cursor: default; background: #362d59; }
     .cue-bar button:focus-visible { outline: 2px solid #fd44b0; outline-offset: 2px; }
+    .cue-bar input {
+      all: unset; box-sizing: border-box; width: 190px; padding: 6px 10px; border-radius: 999px;
+      background: #181225; border: 1px solid #362d59; color: #fff; font-size: 12px; cursor: text;
+    }
+    .cue-bar input:focus { border-color: #fd44b0; }
     .cue-pick {
       position: fixed; left: 0; top: 0; display: none; pointer-events: none; box-sizing: border-box;
       border: 2px solid #fd44b0; border-radius: 4px; background: rgba(253, 68, 176, 0.12);
@@ -536,6 +542,7 @@
       <div class="cue-pick"><span></span></div>
       <div class="cue-bar" role="dialog" aria-label="Recording a cue">
         <i class="dot"></i><span class="msg"></span><span class="hint"></span>
+        <input class="name" type="text" aria-label="Cue name" placeholder="Cue name" maxlength="80" hidden>
         <button class="save" hidden>Save cue</button>
         <button class="cancel">Cancel</button>
       </div>`;
@@ -547,8 +554,12 @@
       msg: root.querySelector('.msg'),
       hint: root.querySelector('.hint'),
       save: root.querySelector('.save'),
+      name: root.querySelector('.name'),
       bar: root.querySelector('.cue-bar'),
     };
+    // Typing a name shouldn't reach the page's own shortcuts. Enter and Esc
+    // are handled before this, by onKeyDown.
+    for (const type of ['keydown', 'keyup', 'keypress']) ui.name.addEventListener(type, (e) => e.stopPropagation());
     ui.save.addEventListener('click', saveRecording);
     root.querySelector('.cancel').addEventListener('click', () => endRecording('Recording cancelled'));
   }
@@ -561,6 +572,7 @@
         : rec.what === 'trigger' ? 'Click the element that should trigger this cue' : 'Click the element that ends this cue';
       ui.hint.textContent = rec.step === 'trigger' ? 'Esc to cancel' : `${rec.name} · Esc to cancel`;
       ui.save.hidden = true;
+      ui.name.hidden = true;
     } else {
       const s = api.getSpot();
       ui.pick.style.display = 'none';
@@ -569,9 +581,17 @@
       ui.hint.textContent = s.pinned ? (s.zoomed ? 'Zoomed: the cue will zoom too' : 'Not zoomed (🔍 to zoom)') : 'Trigger saved';
       ui.save.hidden = false;
       ui.save.disabled = !s.pinned;
+      // A new cue is named as it's saved (a redrawn one keeps its name).
+      ui.name.hidden = !!rec.replaceId;
+      if (!rec.replaceId && !ui.named) {
+        ui.name.value = defaultName(rec.name);
+        ui.named = true;
+      }
       ui.save.textContent = rec.replaceId ? 'Save area' : 'Save cue';
     }
   }
+
+  const defaultName = (triggerName) => `Click “${(triggerName || '').slice(0, 40)}”`;
 
   function startRecording() {
     stopRun();
@@ -635,7 +655,7 @@
         if (what === 'trigger' && index === 0) {
           const old = list[0];
           const oldName = old.name || old.element?.find((st) => st.name)?.name || '';
-          if (c.name === `Click “${oldName.slice(0, 40)}”`) c.name = `Click “${name.slice(0, 40)}”`;
+          if (c.name === defaultName(oldName)) c.name = defaultName(name);
         }
         list[index] = { ...list[index], ...item };
       }).then(() => endRecording(what === 'end'
@@ -707,7 +727,7 @@
     const cue = {
       v: 1,
       id: `c_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-      name: `Click “${rec.name.slice(0, 40)}”`,
+      name: ui?.name.value.trim() || defaultName(rec.name),
       enabled: true,
       page: rec.page,
       triggers: [{ event: 'click', element: rec.trigger, name: rec.name }],
@@ -882,6 +902,7 @@
   chrome.runtime.onMessage.addListener(onMessage);
   chrome.storage.onChanged.addListener(onStorageChanged);
   api.onState(syncUi);
+  api.outsidePaused = () => !!rec; // setting up a cue's spotlight: outside clicks act normally
   api.onState((state) => { if (!state.spotlight) clearShown(); });
 
   Promise.all([

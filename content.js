@@ -40,10 +40,12 @@
     width: 280,        // px (the diameter for a circle)
     height: 180,       // px (ignored for a circle)
     effect: 'dim',     // dim | blur | blur-dim
-    intensity: 70,     // 0..100, meaning depends on the effect
+    strength: 100,     // 0..100, meaning depends on the effect (see applyEffect)
     autoZoomResize: true, // zoom in after resizing a placed spotlight with a handle
     autoZoomPlace: false, // zoom in as soon as the spotlight is placed (stops following)
     inkColor: '#fd44b0',  // disappearing-ink colour (Sentry hot pink)
+    blockOutside: false,  // a placed spotlight keeps clicks and scrolling off the page around it
+    closeOnOutside: false, // a click outside a placed spotlight turns it off
   };
   const MIN_SIZE = 60;
   const ROUNDED_RADIUS = 18;
@@ -104,6 +106,9 @@
   const zoom = { mode: 'none', view: { ...IDENTITY }, goal: { ...IDENTITY }, el: null, base: null, saved: null, animating: false };
   let swallowClick = false;      // eat the rest of the click that placed the spotlight
   let swallowTimer = 0;
+  let blockGesture = false;      // eat the rest of a press blocked outside the spotlight
+  let blockTimer = 0;
+  const blockedEvents = new WeakSet(); // events kept from the page (cues.js asks)
   let rafId = 0;
 
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -448,22 +453,24 @@
     }
   }
 
+  // Full strength is what 2% was on the earlier scale (which started far
+  // stronger); 0% is no effect at all.
   function applyEffect() {
     if (!maskEl) return;
-    const t = clamp(settings.intensity, 0, 100) / 100;
+    const t = clamp(settings.strength, 0, 100) / 100;
     let background;
-    blurPx = 0;
     switch (settings.effect) {
       case 'blur':
-        background = 'rgba(0, 0, 0, 0.1)';
-        blurPx = 2 + t * 22;
+        background = `rgba(0, 0, 0, ${(0.1 * t).toFixed(3)})`;
+        blurPx = 2.44 * t;
         break;
       case 'blur-dim':
-        background = `rgba(0, 0, 0, ${(0.15 + t * 0.6).toFixed(2)})`;
-        blurPx = 8;
+        background = `rgba(0, 0, 0, ${(0.162 * t).toFixed(3)})`;
+        blurPx = 8 * t;
         break;
       default: // dim
-        background = `rgba(0, 0, 0, ${(0.2 + t * 0.75).toFixed(2)})`;
+        background = `rgba(0, 0, 0, ${(0.215 * t).toFixed(3)})`;
+        blurPx = 0;
     }
     maskEl.style.background = background;
     render(); // applies the blur
@@ -1069,7 +1076,11 @@
   }
 
   function onPointerDown(e) {
-    if (!spot.active || spot.pinned || e.button !== 0 || fromOverlay(e)) return;
+    if (spot.pinned) {
+      onOutsidePress(e);
+      return;
+    }
+    if (!spot.active || e.button !== 0 || fromOverlay(e)) return;
     // This click places the spotlight; don't let it also click the page.
     mouse.x = e.clientX;
     mouse.y = e.clientY;
@@ -1086,6 +1097,42 @@
     e.preventDefault();
     e.stopImmediatePropagation();
     if (e.type === 'click') swallowClick = false;
+  }
+
+  // Whether (x, y) is page area around a placed spotlight. Not while a cue is
+  // being recorded (its spotlight is being set up), and a scrollbar (outside
+  // the page's client area) doesn't count.
+  function isOutside(e) {
+    if (!spot.active || !spot.pinned || drag || fromOverlay(e) || api.outsidePaused()) return false;
+    const doc = document.documentElement;
+    if (e.clientX >= doc.clientWidth || e.clientY >= doc.clientHeight) return false;
+    return edgeDistance(e.clientX, e.clientY) > 0;
+  }
+
+  // A press outside a placed spotlight: kept from the page (blockOutside),
+  // and/or turns the spotlight off (closeOnOutside, left button only).
+  function onOutsidePress(e) {
+    blockGesture = false;
+    if (!isOutside(e)) return;
+    if (settings.blockOutside) {
+      blockGesture = true;
+      clearTimeout(blockTimer);
+      blockTimer = setTimeout(() => { blockGesture = false; }, 800);
+      onBlockable(e);
+    }
+    if (settings.closeOnOutside && e.button === 0) setSpotlight(false);
+  }
+
+  // Keep the rest of a blocked press, and any wheel outside the spotlight,
+  // from the page. stopPropagation, not stopImmediatePropagation, so cues.js
+  // (also on window) still sees the click: it can end a cue, though it won't
+  // trigger one.
+  function onBlockable(e) {
+    if (e.type === 'wheel' ? !(settings.blockOutside && isOutside(e)) : !blockGesture) return;
+    if (e.type !== 'contextmenu') e.preventDefault(); // the browser's own menu still opens
+    e.stopPropagation();
+    blockedEvents.add(e);
+    if (e.type === 'click' || e.type === 'contextmenu') blockGesture = false;
   }
 
   function onResize() {
@@ -1156,6 +1203,8 @@
     [window, 'pointerup', onSwallowable, { capture: true }],
     [window, 'mouseup', onSwallowable, { capture: true }],
     [window, 'click', onSwallowable, { capture: true }],
+    ...['mousedown', 'pointerup', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu'].map((type) => [window, type, onBlockable, { capture: true }]),
+    [window, 'wheel', onBlockable, { capture: true, passive: false }],
     [window, 'resize', onResize, { passive: true }],
     [window, 'keydown', onKeyDown, { capture: true }],
     [window, 'keyup', onKeyUp, { capture: true }],
@@ -1168,6 +1217,7 @@
     cancelAnimationFrame(rafId);
     clearTimeout(hudTimer);
     clearTimeout(swallowTimer);
+    clearTimeout(blockTimer);
     clearTimeout(peekTimer);
     cancelAnimationFrame(inkRaf);
     endZoom();
@@ -1198,6 +1248,11 @@
     // Add cue UI to the overlay's shadow root, so the spotlight ignores clicks on it.
     mount: (node) => { ensureOverlay(); rootEl.appendChild(node); },
     isOverlay: fromOverlay,
+    // Whether the spotlight kept this event from the page (blockOutside).
+    isBlocked: (e) => !!e && blockedEvents.has(e),
+    // cues.js replaces this: true while a cue is being recorded, when clicks
+    // outside the spotlight are neither blocked nor close it.
+    outsidePaused: () => false,
     onState: (fn) => { stateListeners.add(fn); },
   };
   globalThis.__spotlight = api;

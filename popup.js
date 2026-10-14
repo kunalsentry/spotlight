@@ -5,10 +5,12 @@ const DEFAULTS = {
   width: 280,
   height: 180,
   effect: 'dim',
-  intensity: 70,
+  strength: 100,
   autoZoomResize: true,
   autoZoomPlace: false,
   inkColor: '#fd44b0',
+  blockOutside: false,
+  closeOnOutside: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -19,7 +21,7 @@ let viewport = null; // the tab's viewport, so size sliders can reach full scree
 const SLIDERS = {
   width: (v) => `${v}`,
   height: (v) => `${v}`,
-  intensity: (v) => `${v}%`,
+  strength: (v) => `${v}%`,
 };
 
 function save(patch) {
