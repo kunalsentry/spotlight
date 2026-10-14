@@ -11,6 +11,7 @@ A Manifest V3 Chrome extension that spotlights part of a web page while you pres
 | `content.js` | The spotlight: overlay, effects, cursor following, placing, dragging, and the on-page toolbar |
 | `cues.js` | Cues: recording, finding elements again, matching pages, and placing the spotlight when a cue's trigger is clicked |
 | `popup.html` / `popup.js` | Two tabs: **Spotlight** (on/off switch, shape, size, effect, strength, ink, zoom) and **Cues** (arm, record, test and edit cues) |
+| `cue-model.js` | The cue format (triggers and ends) and conversion of cues saved by earlier versions; shared by the content scripts, popup and manager |
 | `cue-editor.js` / `cue-editor.css` | The cue editor, shared by the popup's Cues tab and the cue manager |
 | `options.html` / `options.js` | The cue manager: every cue on one page, plus import and export |
 | `icons/` | Toolbar and extension icons |
@@ -41,7 +42,7 @@ On Windows, Chrome uses Alt+D to jump to the address bar, which may take priorit
 
 ## Cues
 
-A cue turns the spotlight on by itself when you click a specific element on certain pages: for example, clicking **Open trace** on any issue spotlights the trace waterfall, already sized and optionally zoomed. Cues only run while they're **armed**.
+A cue turns the spotlight on by itself when you click one of its trigger elements on certain pages: for example, clicking **Open trace** on any issue spotlights the trace waterfall, already sized and optionally zoomed. Cues only run while they're **armed**.
 
 Everything about cues is on the popup's **Cues** tab (the popup reopens on the tab you used last).
 
@@ -53,10 +54,10 @@ Everything about cues is on the popup's **Cues** tab (the popup reopens on the t
 - **When a cue fires,** the spotlight is placed exactly as if you had placed it by hand, with the cue's size, shape and zoom instead of the popup's. Everything else works as usual: drag, resize, ⌖ (back to the popup's size and shape), 🔍, ✕ and ⌥S. The effect and strength come from the Spotlight tab.
 - **Edit:** the Cues tab lists this page's cues (**Show all** lists every cue). Click one to open its editor; changes save as you make them:
   - **Name** and **Page** (the URL pattern; see below).
-  - **Trigger:** **Pick on page** to click a different element (the cue's name follows it if you never renamed the cue), **Check on page** to outline the element the cue finds now, and **Matching** to edit how it's found: each way is a CSS selector, optionally limited to elements with an exact name. They're tried in order and the first that finds exactly one element wins; Check shows how many elements each one finds. You can edit, remove and add them.
+  - **Triggers:** a click on any of them starts the cue. **Add a trigger** picks another element on the page; × removes one (a cue keeps at least one). For each, **Pick on page** clicks a different element (the cue's name follows its first trigger if you never renamed the cue), **Check on page** to outline the element the cue finds now, and **Matching** to edit how it's found: each way is a CSS selector, optionally limited to elements with an exact name. They're tried in order and the first that finds exactly one element wins; Check shows how many elements each one finds. You can edit, remove and add them.
   - **Area:** for the width and the height, either **Follows element** (with padding on each side) or **Fixed** (a size, measured from the left/top, the right/bottom, or the centre). Switching between them keeps the spotlight where it is on the page. **Redraw on page** lets you place and size it again with the mouse.
   - **Shape:** box or circle (a circle's height is its width).
-  - **Ends:** how the cue's spotlight turns off (✕ and ⌥S always work too): on a click outside the spotlight (the default; clicks inside it, on its toolbar or on a scrollbar don't count), on a click on an element you pick on the page (e.g. a drawer's Close button; the click still goes through to the page; it has the same Pick, Check and Matching controls as the trigger), after a delay, or only manually. A click that ends one cue can trigger another.
+  - **Ends:** how the cue's spotlight turns off; any of them does it, and ✕ and ⌥S always work too. Each is a click outside the spotlight (the default for new cues; clicks inside it, on its toolbar or on a scrollbar don't count), a click on an element you pick on the page (e.g. a drawer's Close button; the click still goes through to the page; it has the same Pick, Check and Matching controls as a trigger), or a delay. **Add an ending** adds one, its menu changes its kind, and × removes it; with none left the cue ends only manually. A click that ends one cue can trigger another.
   - **Options:** zoom in, scroll into view, and how long to wait for the element to appear.
   - **Delete:** the trash button on the cue's row, or **Delete cue** at the bottom of its editor.
   - **Test** shows the cue's spotlight on the page; while it's showing, every change you make updates it right away. Test, redraw, picking and checking elements need the cue's page, so they appear only for cues on this page.

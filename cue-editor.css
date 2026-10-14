@@ -74,3 +74,7 @@
 .ce-strat input[type="text"] { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .ce-count { font-size: 10.5px; }
 .ce-hint { font-size: 11px; color: var(--muted); }
+.ce-list { display: grid; gap: 6px; }
+.ce-item { display: grid; gap: 5px; padding: 6px; border: 1px solid var(--line); border-radius: 6px; }
+.ce-item-head { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.ce-item-head > span, .ce-item-head > select { flex: 1; min-width: 0; }

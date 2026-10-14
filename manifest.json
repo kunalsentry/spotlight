@@ -35,6 +35,7 @@
       ],
       "js": [
         "content.js",
+        "cue-model.js",
         "cues.js"
       ],
       "run_at": "document_idle"

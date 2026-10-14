@@ -20,12 +20,8 @@
 //   center   fixed size, `offset` from the anchor's centre
 // A cue whose two axes both stretch simply fits its anchor, plus padding.
 //
-// A cue also ends its spotlight (cue.deactivate):
-//   { on: 'outside' }                               a click outside the spotlight (the default)
-//   { on: 'element', element: Fingerprint, name }  a click on that element
-//   { on: 'timer', ms }                             after a delay
-//   null                                            only like any spotlight: ✕ or ⌥S
-// A cue saved without the field (older cues) gets the default.
+// Its triggers and ends (each a list; any one counts) are described in
+// cue-model.js, which also converts cues saved by earlier versions.
 
 (() => {
   'use strict';
@@ -52,8 +48,6 @@
   let armed = false;
   let run = null;      // the cue being carried out: { cue, timer, ... }
   let shown = null;    // the cue whose spotlight is on now: { cue, timer }
-  const DEFAULT_END = { on: 'outside' };
-  const endOf = (cue) => (cue.deactivate === undefined ? DEFAULT_END : cue.deactivate);
   let rec = null;      // recording state: { step, trigger, name, page }
   let ui = null;       // recording bar and picker highlight
 
@@ -381,10 +375,11 @@
   function setShown(cue) {
     clearShown();
     shown = { cue, timer: 0 };
-    const end = endOf(cue);
-    if (end?.on === 'timer' && end.ms > 0) {
+    // The soonest of its timer ends, if any.
+    const ms = Math.min(...cue.ends.filter((end) => end.on === 'timer' && end.ms > 0).map((end) => end.ms));
+    if (Number.isFinite(ms)) {
       const mine = shown;
-      shown.timer = setTimeout(() => { if (shown === mine) api.setSpotlight(false); }, end.ms);
+      shown.timer = setTimeout(() => { if (shown === mine) api.setSpotlight(false); }, ms);
     }
   }
 
@@ -394,11 +389,14 @@
     shown = null;
   }
 
-  // Whether this click ends the cue that's showing. Overlay clicks (toolbar,
-  // handles, edge) never do.
+  // Whether this click ends the cue that's showing (any of its ends).
+  // Overlay clicks (toolbar, handles, edge) never do.
   function endsCue(e) {
-    const end = shown && endOf(shown.cue);
-    if (!end || api.isOverlay(e)) return false;
+    if (!shown || api.isOverlay(e)) return false;
+    return shown.cue.ends.some((end) => clickEnds(end, e));
+  }
+
+  function clickEnds(end, e) {
     if (end.on === 'element') {
       const el = end.element && resolve(end.element);
       return !!el && el.contains(e.target);
@@ -420,12 +418,14 @@
     try { sessionStorage.removeItem(PENDING_KEY); } catch { /* storage blocked */ }
   }
 
-  // The cue whose trigger is (or contains) the clicked element, if any.
+  // The cue with a trigger that is (or contains) the clicked element, if any.
   function cueForClick(target) {
     for (const cue of cues) {
       if (!cue.enabled || !pageMatches(cue)) continue;
-      const el = resolve(cue.trigger.element);
-      if (el && el.contains(target)) return cue;
+      for (const trigger of cue.triggers) {
+        const el = trigger.element?.length && resolve(trigger.element);
+        if (el && el.contains(target)) return cue;
+      }
     }
     return null;
   }
@@ -620,18 +620,27 @@
     if (rec.step === 'pick') {
       // The click goes through here too (to open what the trigger opens, or
       // because an end element is usually a Close button).
+      // `index`: the trigger or end to replace; none adds one.
       const name = describe(el);
-      const { cueId, what } = rec;
+      const { cueId, what, index } = rec;
+      const replacing = index != null;
       updateStoredCue(cueId, (c) => {
-        if (what === 'end') {
-          c.deactivate = { on: 'element', element: fp, name };
+        const list = what === 'end' ? c.ends : c.triggers;
+        const item = what === 'end' ? { on: 'element', element: fp, name } : { event: 'click', element: fp, name };
+        if (!replacing || !list[index]) {
+          list.push(item);
           return;
         }
-        // A name still made from the old trigger follows the new one.
-        const oldName = c.trigger.name || c.trigger.element.find((st) => st.name)?.name || '';
-        if (c.name === `Click “${oldName.slice(0, 40)}”`) c.name = `Click “${name.slice(0, 40)}”`;
-        c.trigger = { ...c.trigger, element: fp, name };
-      }).then(() => endRecording(what === 'end' ? `Cue now ends on a click on “${name}”` : `Cue now triggered by “${name}”`));
+        // A name still made from the first trigger follows a new first trigger.
+        if (what === 'trigger' && index === 0) {
+          const old = list[0];
+          const oldName = old.name || old.element?.find((st) => st.name)?.name || '';
+          if (c.name === `Click “${oldName.slice(0, 40)}”`) c.name = `Click “${name.slice(0, 40)}”`;
+        }
+        list[index] = { ...list[index], ...item };
+      }).then(() => endRecording(what === 'end'
+        ? `Cue ${replacing ? 'now ends' : 'also ends'} on a click on “${name}”`
+        : `Cue ${replacing ? 'now' : 'also'} triggered by “${name}”`));
       return;
     }
     // The click goes through, so the page shows whatever it opens.
@@ -644,15 +653,17 @@
     const { cues: stored = [] } = await chrome.storage.local.get('cues');
     const cue = stored.find((c) => c.id === id);
     if (cue) {
-      fn(cue);
+      fn(CueModel.normalize(cue));
       await chrome.storage.local.set({ cues: stored });
     }
   }
 
-  function startPick(cue, what) {
+  // Pick a trigger or end element for a cue: replacing the one at `index`,
+  // or adding one (index null).
+  function startPick(cue, what, index = null) {
     stopRun();
     api.setSpotlight(false);
-    rec = { step: 'pick', what, cueId: cue.id, name: cue.name };
+    rec = { step: 'pick', what, index, cueId: cue.id, name: cue.name };
     syncUi();
   }
 
@@ -672,7 +683,7 @@
   // spotlight step, starting from where the cue puts it now (if it can).
   function startRedraw(cue) {
     stopRun();
-    rec = { step: 'spotlight', trigger: cue.trigger.element, name: cue.name, page: cue.page, replaceId: cue.id };
+    rec = { step: 'spotlight', trigger: cue.triggers[0]?.element, name: cue.name, page: cue.page, replaceId: cue.id };
     beginSpotlightStep();
     const anchor = cue.spotlight.anchor ? resolve(cue.spotlight.anchor) : null;
     const box = anchor?.getBoundingClientRect();
@@ -699,7 +710,7 @@
       name: `Click “${rec.name.slice(0, 40)}”`,
       enabled: true,
       page: rec.page,
-      trigger: { event: 'click', element: rec.trigger, name: rec.name },
+      triggers: [{ event: 'click', element: rec.trigger, name: rec.name }],
       spotlight: {
         anchor: anchor?.fp ?? null,
         anchorName: anchor ? describe(anchor.el) : null,
@@ -710,7 +721,7 @@
         scroll: true,
         timeoutMs: DEFAULT_TIMEOUT,
       },
-      deactivate: { ...DEFAULT_END },
+      ends: [{ ...CueModel.DEFAULT_END }],
       createdAt: Date.now(),
     };
     const { cues: stored = [] } = await chrome.storage.local.get('cues');
@@ -748,7 +759,7 @@
   // ------------------------------------------------- extension integration
 
   function setCues(list) {
-    cues = Array.isArray(list) ? list.filter((c) => c?.trigger?.element && c?.spotlight && c?.page) : [];
+    cues = Array.isArray(list) ? list.filter((c) => c?.spotlight && c?.page).map((c) => CueModel.normalize(c)) : [];
   }
 
   function onStorageChanged(changes, area) {
@@ -783,7 +794,7 @@
         return;
       case 'testCue': {
         // The popup sends the cue it's editing, which may be newer than ours.
-        const cue = msg.cue ?? cues.find((c) => c.id === msg.id);
+        const cue = CueModel.normalize(msg.cue) ?? cues.find((c) => c.id === msg.id);
         if (cue && !rec) runCue(cue);
         sendResponse({ ok: !!cue });
         return;
@@ -791,16 +802,16 @@
       case 'cueGeometry': {
         // The size of the cue's anchor (or the window) right now, so the
         // editor can switch area modes without moving the spotlight.
-        const cue = msg.cue ?? cues.find((c) => c.id === msg.id);
+        const cue = CueModel.normalize(msg.cue) ?? cues.find((c) => c.id === msg.id);
         const anchor = cue?.spotlight.anchor ? resolve(cue.spotlight.anchor) : null;
         const box = anchor?.getBoundingClientRect();
         const { s: k } = api.view();
         sendResponse(!cue ? null : !cue.spotlight.anchor ? { w: innerWidth, h: innerHeight } : box?.width ? { w: box.width / k, h: box.height / k } : null);
         return;
       }
-      case 'pickCueElement': { // msg.what: 'trigger' | 'end'
+      case 'pickCueElement': { // msg.what: 'trigger' | 'end'; msg.index: which (none: add)
         const cue = cues.find((c) => c.id === msg.id);
-        if (cue) startPick(cue, msg.what === 'end' ? 'end' : 'trigger');
+        if (cue) startPick(cue, msg.what === 'end' ? 'end' : 'trigger', Number.isInteger(msg.index) ? msg.index : null);
         sendResponse({ ok: !!cue });
         return;
       }

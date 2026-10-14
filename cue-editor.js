@@ -10,16 +10,18 @@
 //   redraw()     place and size its spotlight again on the page
 //   measure()    -> Promise<{ w, h } | null>: its anchor's current size, used
 //                to convert between area modes without moving the spotlight
-//   pick(what)   pick the trigger ('trigger') or end ('end') element on the page
+//   pick(what, index)  pick a trigger ('trigger') or end ('end') element on
+//                the page, replacing the one at `index` (null: add one)
 //   check(fp)    -> Promise<{ counts, found } | null>: what a fingerprint finds
 //                on the page now (and outline it there)
 //   changed(cue) called after each saved change (e.g. to refresh a preview)
-// The spotlight's area rules are explained at the top of cues.js.
+// The spotlight's area rules are explained at the top of cues.js; triggers
+// and ends in cue-model.js. Cues are normalized to the current format on read.
 
 const CueStore = {
   async all() {
     const { cues = [] } = await chrome.storage.local.get('cues');
-    return Array.isArray(cues) ? cues : [];
+    return Array.isArray(cues) ? cues.map((c) => CueModel.normalize(c)) : [];
   },
   async update(id, fn) {
     const cues = await CueStore.all();
@@ -35,7 +37,7 @@ const CueStore = {
   },
   async add(list) {
     const byId = new Map((await CueStore.all()).map((c) => [c.id, c]));
-    for (const cue of list) byId.set(cue.id, cue);
+    for (const cue of list) byId.set(cue.id, CueModel.normalize(cue));
     await chrome.storage.local.set({ cues: [...byId.values()] });
   },
 };
@@ -61,7 +63,8 @@ const CueEditor = (() => {
 
   function summary(cue) {
     const sp = cue.spotlight;
-    return `${isFit(sp) ? 'Fits' : 'In'} ${anchorWord(sp)} · ${sp.shape === 'circle' ? 'circle' : 'box'}${sp.zoom ? ' · zoom' : ''}`;
+    const n = cue.triggers.length;
+    return `${isFit(sp) ? 'Fits' : 'In'} ${anchorWord(sp)} · ${sp.shape === 'circle' ? 'circle' : 'box'}${sp.zoom ? ' · zoom' : ''}${n > 1 ? ` · ${n} triggers` : ''}`;
   }
 
   // The spotlight's span [s0, s1] along an axis of length L, and back.
@@ -190,14 +193,40 @@ const CueEditor = (() => {
     }
     body.append(row('Page', el('div', { className: 'ce-stack' }, host, path, pageError)));
 
-    // Trigger: re-pick it on the page, or edit how it's found.
-    body.append(row('Trigger', elementEditor({
-      what: 'trigger',
-      get: () => cue.trigger.element,
-      label: () => cue.trigger.name,
-      set: (fp) => change((c) => { c.trigger = { ...c.trigger, element: fp }; }),
-      describe: (name) => `Click on ${name}`,
-    })));
+    // Triggers: a click on any of them starts the cue. Each can be re-picked
+    // on the page or have how it's found edited; more can be added.
+    const triggers = el('div', { className: 'ce-list' });
+    body.append(row('Triggers', triggers));
+    renderTriggers();
+
+    function renderTriggers() {
+      triggers.textContent = '';
+      cue.triggers.forEach((trigger, i) => {
+        const item = el('div', { className: 'ce-item' });
+        if (cue.triggers.length > 1) {
+          item.append(el('div', { className: 'ce-item-head' },
+            el('span', { textContent: `Trigger ${i + 1}` }),
+            removeButton('Remove this trigger', async () => {
+              await change((c) => { c.triggers.splice(i, 1); });
+              renderTriggers();
+            })));
+        }
+        item.append(elementEditor({
+          what: 'trigger',
+          index: i,
+          get: () => cue.triggers[i]?.element,
+          label: () => cue.triggers[i]?.name,
+          set: (fp) => change((c) => { c.triggers[i] = { ...c.triggers[i], element: fp }; }),
+          describe: (name) => `Click on ${name}`,
+        }));
+        triggers.append(item);
+      });
+      if (hooks.pick) {
+        const add = el('button', { type: 'button', className: 'ce-btn', textContent: 'Add a trigger', title: 'Click another element on the page that should also start this cue' });
+        add.addEventListener('click', () => hooks.pick(cue, 'trigger', null));
+        triggers.append(add);
+      }
+    }
 
     // Spotlight area
     const area = el('div', { className: 'ce-area' });
@@ -274,43 +303,62 @@ const CueEditor = (() => {
     body.append(row('Ends', ends));
     renderEnds();
 
+    // Ends: any of them ends the cue's spotlight. None: only ✕ or ⌥S.
     function renderEnds() {
       ends.textContent = '';
-      // No field (older cues) means the default: a click outside.
-      const end = cue.deactivate === undefined ? { on: 'outside' } : cue.deactivate;
-      const mode = el('select', { ariaLabel: 'How the spotlight ends' });
-      const modes = [
-        ['outside', 'Click outside the spotlight (default)'],
-        ['element', 'Click on an element'],
-        ['timer', 'After a delay'],
-        ['', 'Manually only (✕ or ⌥S)'],
-      ];
-      for (const [value, text] of modes) mode.append(el('option', { value, textContent: text, selected: (end?.on ?? '') === value }));
-      mode.addEventListener('change', async () => {
-        const next = mode.value === 'element' ? { on: 'element', element: null, name: null }
-          : mode.value === 'outside' ? { on: 'outside' }
-            : mode.value === 'timer' ? { on: 'timer', ms: 5000 } : null;
-        await change((c) => { c.deactivate = next; });
+      if (!cue.ends.length) ends.append(el('div', { className: 'ce-note', textContent: 'Only manually (✕ or ⌥S)' }));
+      cue.ends.forEach((end, i) => {
+        const item = el('div', { className: 'ce-item' });
+        const mode = el('select', { ariaLabel: `How the spotlight ends (${i + 1})` });
+        for (const [value, text] of [['outside', 'Click outside the spotlight'], ['element', 'Click on an element'], ['timer', 'After a delay']]) {
+          mode.append(el('option', { value, textContent: text, selected: end.on === value }));
+        }
+        mode.addEventListener('change', async () => {
+          const next = mode.value === 'element' ? { on: 'element', element: null, name: null }
+            : mode.value === 'timer' ? { on: 'timer', ms: 5000 } : { on: 'outside' };
+          await change((c) => { c.ends[i] = next; });
+          renderEnds();
+        });
+        item.append(el('div', { className: 'ce-item-head' }, mode, removeButton('Remove this ending', async () => {
+          await change((c) => { c.ends.splice(i, 1); });
+          renderEnds();
+        })));
+        if (end.on === 'element') {
+          item.append(elementEditor({
+            what: 'end',
+            index: i,
+            get: () => cue.ends[i]?.element,
+            label: () => cue.ends[i]?.name,
+            set: (fp) => change((c) => { c.ends[i] = { ...c.ends[i], element: fp }; }),
+            describe: (name) => `Ends on a click on ${name}`,
+          }));
+        } else if (end.on === 'timer') {
+          const secs = el('input', { type: 'number', value: end.ms / 1000, min: 1, max: 600, step: 1, ariaLabel: 'Seconds until the spotlight ends' });
+          secs.addEventListener('change', () => {
+            const v = Math.min(600, Math.max(1, Math.round(Number(secs.value)) || 5));
+            secs.value = v;
+            change((c) => { c.ends[i] = { on: 'timer', ms: v * 1000 }; });
+          });
+          item.append(el('label', { className: 'ce-num' }, el('span', { textContent: 'After' }), secs, el('span', { className: 'ce-unit', textContent: 's' })));
+        }
+        ends.append(item);
+      });
+      // Adds the first kind not used yet (a click outside, then a delay,
+      // then an element to pick), which its menu can change.
+      const add = el('button', { type: 'button', className: 'ce-btn', textContent: cue.ends.length ? 'Add another ending' : 'Add an ending' });
+      add.addEventListener('click', async () => {
+        const used = new Set(cue.ends.map((end) => end.on));
+        const next = !used.has('outside') ? { on: 'outside' } : !used.has('timer') ? { on: 'timer', ms: 5000 } : { on: 'element', element: null, name: null };
+        await change((c) => { c.ends.push(next); });
         renderEnds();
       });
-      ends.append(mode);
-      if (end?.on === 'element') {
-        ends.append(elementEditor({
-          what: 'end',
-          get: () => cue.deactivate?.element,
-          label: () => cue.deactivate?.name,
-          set: (fp) => change((c) => { c.deactivate = { ...c.deactivate, element: fp }; }),
-          describe: (name) => `Ends on a click on ${name}`,
-        }));
-      } else if (end?.on === 'timer') {
-        const secs = el('input', { type: 'number', value: end.ms / 1000, min: 1, max: 600, step: 1, ariaLabel: 'Seconds until the spotlight ends' });
-        secs.addEventListener('change', () => {
-          const v = Math.min(600, Math.max(1, Math.round(Number(secs.value)) || 5));
-          secs.value = v;
-          change((c) => { c.deactivate = { on: 'timer', ms: v * 1000 }; });
-        });
-        ends.append(el('label', { className: 'ce-num' }, el('span', { textContent: 'After' }), secs, el('span', { className: 'ce-unit', textContent: 's' })));
-      }
+      ends.append(add);
+    }
+
+    function removeButton(title, onClick) {
+      const b = el('button', { type: 'button', className: 'ce-btn ce-icon', textContent: '×', title, ariaLabel: title });
+      b.addEventListener('click', onClick);
+      return b;
     }
 
     // Options
@@ -342,7 +390,7 @@ const CueEditor = (() => {
     // which can be edited, added and removed. A strategy is a CSS selector,
     // optionally narrowed to elements with an exact accessible name; the
     // first one that finds exactly one element is used.
-    function elementEditor({ what, get, label, set, describe }) {
+    function elementEditor({ what, index, get, label, set, describe }) {
       const box = el('div', { className: 'ce-el' });
       render();
       return box;
@@ -357,7 +405,7 @@ const CueEditor = (() => {
         const actions = el('div', { className: 'ce-actions' });
         if (hooks.pick) {
           const pick = el('button', { type: 'button', className: 'ce-btn', textContent: fp.length ? 'Pick on page' : 'Pick element on page', title: 'Click the element on the page' });
-          pick.addEventListener('click', () => hooks.pick(cue, what));
+          pick.addEventListener('click', () => hooks.pick(cue, what, index));
           actions.append(pick);
         }
         const counts = [];
@@ -439,7 +487,8 @@ const CueEditor = (() => {
     return el('div', { className: 'ce-row' }, el('span', { className: 'ce-label', textContent: label }), content);
   }
 
-  const isCue = (c) => c && typeof c.id === 'string' && c.page && c.trigger?.element?.length && c.spotlight?.x && c.spotlight?.y;
+  const isCue = (c) => !!c && typeof c.id === 'string' && !!c.page && !!c.spotlight?.x && !!c.spotlight?.y
+    && CueModel.normalize(structuredClone(c)).triggers.some((t) => t.element?.length);
 
   return { create, isCue, validPattern };
 })();
