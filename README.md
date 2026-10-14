@@ -11,6 +11,7 @@ A Manifest V3 Chrome extension that spotlights part of a web page while you pres
 | `content.js` | The spotlight: overlay, effects, cursor following, placing, dragging, and the on-page toolbar |
 | `cues.js` | Cues: recording, finding elements again, matching pages, and placing the spotlight when a cue's trigger is clicked |
 | `popup.html` / `popup.js` | Two tabs: **Spotlight** (on/off switch, shape, size, effect, strength, ink, zoom) and **Cues** (arm, record, test and edit cues) |
+| `cue-model.js` | The cue format (triggers and ends) and conversion of cues saved by earlier versions; shared by the content scripts, popup and manager |
 | `cue-editor.js` / `cue-editor.css` | The cue editor, shared by the popup's Cues tab and the cue manager |
 | `options.html` / `options.js` | The cue manager: every cue on one page, plus import and export |
 | `icons/` | Toolbar and extension icons |
@@ -27,7 +28,7 @@ After you edit the code, click the reload icon on the extension's card.
 ## Using it
 
 1. Press **⌥S** (press it again to turn the spotlight off), flip the switch in the popup, or right-click anywhere on the page and click **Spotlight**. The spotlight follows your cursor, starting where you are (or where you right-clicked). While the spotlight is on, the menu item reads **Turn off spotlight**.
-2. **Click** to place it. That click only places the spotlight; it doesn't click the page. After that, the page works normally: you can click, type and scroll, inside the spotlight or outside it.
+2. **Click** to place it. That click only places the spotlight; it doesn't click the page. After that, the page works normally: you can click, type and scroll, inside the spotlight or outside it (unless **Outside** settings say otherwise, see below).
 3. **Drag** the spotlight's edge (the cursor changes to a hand) or the **⠿** handle to move it.
 4. **Resize** it by dragging one of the two white squares, at the top-left and bottom-right of the outline. The opposite corner stays where it is. A circle stays a circle; a box resizes freely. When you let go, the page automatically zooms in to the newly sized area (see Zoom below), unless **After resize** is turned off in the popup; a click on a handle without dragging doesn't. This size is temporary. Going back to following the cursor (⌖) smoothly returns it to the size set in the popup, and the next time you turn the spotlight on it starts at that size.
 5. The toolbar above it has **⌖**, which follows the cursor again, **🔍**, which zooms in, and **✕**, which turns the spotlight off. **⌥S** also turns it off. The toolbar normally sits above or below the spotlight. When there's no room and it has to sit over the spotlight area (for example, when a large spotlight is zoomed), it turns nearly transparent so it doesn't hide what you're showing; hover over it (or tab to it) to show it fully. It also shows fully for a moment when you place the spotlight or the zoom changes.
@@ -41,7 +42,7 @@ On Windows, Chrome uses Alt+D to jump to the address bar, which may take priorit
 
 ## Cues
 
-A cue turns the spotlight on by itself when you click a specific element on certain pages: for example, clicking **Open trace** on any issue spotlights the trace waterfall, already sized and optionally zoomed. Cues only run while they're **armed**.
+A cue turns the spotlight on by itself when you click one of its trigger elements on certain pages: for example, clicking **Open trace** on any issue spotlights the trace waterfall, already sized and optionally zoomed. Cues only run while they're **armed**.
 
 Everything about cues is on the popup's **Cues** tab (the popup reopens on the tab you used last).
 
@@ -49,14 +50,14 @@ Everything about cues is on the popup's **Cues** tab (the popup reopens on the t
 - **Record:** on the page, click **Record cue**.
   1. Click the element that should trigger the cue. A pink outline shows what will be picked, and the click goes through to the page, so whatever it opens appears.
   2. The spotlight turns on as a box. Click to place it, then drag and resize it as usual. Zoom in with 🔍 if the cue should zoom. What you see is what's saved.
-  3. Click **Save cue** or press Enter (Esc cancels).
+  3. Name the cue in the bar (it starts as “Click …” after the trigger), then click **Save cue** or press Enter (Esc cancels). You can rename it later in the cue's editor.
 - **When a cue fires,** the spotlight is placed exactly as if you had placed it by hand, with the cue's size, shape and zoom instead of the popup's. Everything else works as usual: drag, resize, ⌖ (back to the popup's size and shape), 🔍, ✕ and ⌥S. The effect and strength come from the Spotlight tab.
 - **Edit:** the Cues tab lists this page's cues (**Show all** lists every cue). Click one to open its editor; changes save as you make them:
   - **Name** and **Page** (the URL pattern; see below).
-  - **Trigger:** **Pick on page** to click a different element (the cue's name follows it if you never renamed the cue), **Check on page** to outline the element the cue finds now, and **Matching** to edit how it's found: each way is a CSS selector, optionally limited to elements with an exact name. They're tried in order and the first that finds exactly one element wins; Check shows how many elements each one finds. You can edit, remove and add them.
+  - **Triggers:** a click on any of them starts the cue. **Add a trigger** picks another element on the page; × removes one (a cue keeps at least one). For each, **Pick on page** clicks a different element (the cue's name follows its first trigger if you never renamed the cue), **Check on page** to outline the element the cue finds now, and **Matching** to edit how it's found: each way is a CSS selector, optionally limited to elements with an exact name. They're tried in order and the first that finds exactly one element wins; Check shows how many elements each one finds. You can edit, remove and add them.
   - **Area:** for the width and the height, either **Follows element** (with padding on each side) or **Fixed** (a size, measured from the left/top, the right/bottom, or the centre). Switching between them keeps the spotlight where it is on the page. **Redraw on page** lets you place and size it again with the mouse.
   - **Shape:** box or circle (a circle's height is its width).
-  - **Ends:** how the cue's spotlight turns off (✕ and ⌥S always work too): on a click outside the spotlight (the default; clicks inside it, on its toolbar or on a scrollbar don't count), on a click on an element you pick on the page (e.g. a drawer's Close button; the click still goes through to the page; it has the same Pick, Check and Matching controls as the trigger), after a delay, or only manually. A click that ends one cue can trigger another.
+  - **Ends:** how the cue's spotlight turns off; any of them does it, and ✕ and ⌥S always work too. Each is a click outside the spotlight (the default for new cues; clicks inside it, on its toolbar or on a scrollbar don't count), a click on an element you pick on the page (e.g. a drawer's Close button; the click still goes through to the page; it has the same Pick, Check and Matching controls as a trigger), or a delay. **Add an ending** adds one, its menu changes its kind, and × removes it; with none left the cue ends only manually. A click that ends one cue can trigger another.
   - **Options:** zoom in, scroll into view, and how long to wait for the element to appear.
   - **Delete:** the trash button on the cue's row, or **Delete cue** at the bottom of its editor.
   - **Test** shows the cue's spotlight on the page; while it's showing, every change you make updates it right away. Test, redraw, picking and checking elements need the cue's page, so they appear only for cues on this page.
@@ -80,11 +81,14 @@ Cue limitations: only clicks trigger (or end) cues; synthetic clicks made by pag
   - **Dim** darkens it.
   - **Blur** blurs it.
   - **Both** applies a fixed blur and darkens it.
-- **Strength:** how dark the dimming is for **Dim** and **Both**, or how strong the blur is for **Blur**.
+- **Strength:** how dark the dimming is for **Dim** and **Both** (and how strong the blur is for **Both**), or how strong the blur is for **Blur**. 0% has no effect; 100% is a light touch (what 2% was in earlier versions).
 - **Ink:** the colour of the disappearing ink: pink, blurple, yellow, lime or white, or any colour from the picker at the end.
 - **Zoom:** two independent on/off toggles for automatic zoom.
   - **On place** (off by default): zoom in as soon as you click to place the spotlight and it stops following the cursor.
   - **After resize** (on by default): zoom in to the new size when you finish resizing with a handle. Resizing while zoomed always zooms out first (around the handle, so it stays under your cursor), so you see the page at normal size while you adjust it. With this off, it stays zoomed out.
+- **Outside:** two independent toggles for clicks outside a placed spotlight (both off by default). The toolbar, handles and edge, and scrollbars, aren't "outside"; neither applies while you record or redraw a cue.
+  - **Block clicks:** clicks, right-clicks and scrolling outside the spotlight don't reach the page (the browser's own right-click menu still opens). Keyboard input isn't blocked. A blocked click can still end a cue, but never triggers one.
+  - **Click closes:** a click outside the spotlight turns it off, for any spotlight, cue or not. Unless **Block clicks** is on too, the click also goes through to the page.
 
 All settings apply live and are remembered. If you saved a shape or effect that this version no longer offers, it switches to the nearest one: Ellipse becomes Circle, Rectangle becomes Box, and Black out or Grayscale become Dim.
 

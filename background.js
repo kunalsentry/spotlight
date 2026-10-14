@@ -6,7 +6,7 @@
 // starts unarmed) and resizes the window for testing cues at other sizes.
 
 const MENU_ID = 'toggle-spotlight';
-const CONTENT_SCRIPTS = ['content.js', 'cues.js'];
+const CONTENT_SCRIPTS = ['content.js', 'cue-model.js', 'cues.js'];
 const ON_COLOR = '#7553FF';  // blurple: spotlight on in this tab
 const CUE_COLOR = '#FD44B0'; // pink: cues armed
 

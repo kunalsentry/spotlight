@@ -5,10 +5,12 @@ const DEFAULTS = {
   width: 280,
   height: 180,
   effect: 'dim',
-  intensity: 70,
+  strength: 100,
   autoZoomResize: true,
   autoZoomPlace: false,
   inkColor: '#fd44b0',
+  blockOutside: false,
+  closeOnOutside: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -19,7 +21,7 @@ let viewport = null; // the tab's viewport, so size sliders can reach full scree
 const SLIDERS = {
   width: (v) => `${v}`,
   height: (v) => `${v}`,
-  intensity: (v) => `${v}%`,
+  strength: (v) => `${v}%`,
 };
 
 function save(patch) {
@@ -209,7 +211,7 @@ async function renderCues() {
       test: onThisPage ? preview : null,
       redraw: onThisPage ? async (c) => { await sendToTab({ action: 'redrawCue', id: c.id }); window.close(); } : null,
       measure: onThisPage ? (c) => sendToTab({ action: 'cueGeometry', id: c.id, cue: c }) : null,
-      pick: onThisPage ? async (c, what) => { await sendToTab({ action: 'pickCueElement', id: c.id, what }); window.close(); } : null,
+      pick: onThisPage ? async (c, what, index) => { await sendToTab({ action: 'pickCueElement', id: c.id, what, index }); window.close(); } : null,
       check: onThisPage ? (element) => sendToTab({ action: 'checkElement', element }) : null,
       changed: onCueChanged,
       deleted: () => renderCues(),

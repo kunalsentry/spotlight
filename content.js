@@ -40,10 +40,12 @@
     width: 280,        // px (the diameter for a circle)
     height: 180,       // px (ignored for a circle)
     effect: 'dim',     // dim | blur | blur-dim
-    intensity: 70,     // 0..100, meaning depends on the effect
+    strength: 100,     // 0..100, meaning depends on the effect (see applyEffect)
     autoZoomResize: true, // zoom in after resizing a placed spotlight with a handle
     autoZoomPlace: false, // zoom in as soon as the spotlight is placed (stops following)
     inkColor: '#fd44b0',  // disappearing-ink colour (Sentry hot pink)
+    blockOutside: false,  // a placed spotlight keeps clicks and scrolling off the page around it
+    closeOnOutside: false, // a click outside a placed spotlight turns it off
   };
   const MIN_SIZE = 60;
   const ROUNDED_RADIUS = 18;
@@ -72,7 +74,10 @@
     x: mouse.x, y: mouse.y,       // rendered centre
     pinX: mouse.x, pinY: mouse.y, // placed centre
   };
-  let painted = null;            // { key, w, h, Ew, Eh }: the hole size the mask was built for, and the layer's size
+  let painted = null;            // { key, w, h, Ew, Eh, … }: the hole size the mask on screen was built for, and the layer's size
+  let pendingMask = null;        // the latest mask requested, while it decodes (see paintMask)
+  let maskSeq = 0;
+  let fadeInWaiting = false;     // turned on, waiting for its mask before fading in
   let ringKey = '';              // geometry the outline/handles were last laid out for
   let blurPx = 0;                // backdrop blur radius for the current effect (0: none)
   let backdropFilter = '';       // backdrop-filter currently applied to the mask layer
@@ -101,6 +106,9 @@
   const zoom = { mode: 'none', view: { ...IDENTITY }, goal: { ...IDENTITY }, el: null, base: null, saved: null, animating: false };
   let swallowClick = false;      // eat the rest of the click that placed the spotlight
   let swallowTimer = 0;
+  let blockGesture = false;      // eat the rest of a press blocked outside the spotlight
+  let blockTimer = 0;
+  const blockedEvents = new WeakSet(); // events kept from the page (cues.js asks)
   let rafId = 0;
 
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -346,7 +354,8 @@
     // layer by the small remainder. Never scale the layer (far larger than the
     // screen) up a lot: Chrome then rasters it at that higher resolution, can
     // run short of tile memory and drop parts of the mask, so the hole flickers.
-    if (!zoom.animating || !painted || Math.abs(w / painted.w - 1) > MASK_RESCALE) paintMask(w, h);
+    const last = pendingMask ?? painted; // the newest mask asked for
+    if (!zoom.animating || !last || Math.abs(w / last.w - 1) > MASK_RESCALE) paintMask(w, h);
     paintRing(w, h);
   }
 
@@ -354,9 +363,19 @@
   // (plus a margin for the small zoom remainder), so wherever render() moves
   // it, it still covers the screen. Moving is then a transform the compositor
   // applies; only a size change repaints the mask.
+  //
+  // Chrome decodes a newly referenced mask image asynchronously, and until
+  // it has, the layer counts as empty: no hole at all for a frame or two, so
+  // the spotlit area flickers dim (worst with cues, which nearly always bring
+  // a new size). So each new mask is decoded first and swapped in once ready;
+  // meanwhile render() keeps scaling the current one.
   function paintMask(w, h) {
     const key = `${w},${h},${shape()},${innerWidth},${innerHeight}`;
-    if (painted?.key === key) return;
+    if (painted?.key === key) {
+      pendingMask = null; // back to the mask on screen: drop any still decoding
+      return;
+    }
+    if (pendingMask?.key === key) return;
     const { rx, ry } = cornerRadii(w, h);
     const soft = SOFT_EDGE;
     const pad = soft * 2;
@@ -369,13 +388,42 @@
       : '';
     const svg = `<svg xmlns="${SVG_NS}" width="${W}" height="${H}">${filter}`
       + `<rect x="${pad}" y="${pad}" width="${w}" height="${h}" rx="${rx}" ry="${ry}" fill="#000"${soft ? ' filter="url(#f)"' : ''}/></svg>`;
+    const url = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+    const next = { key, w, h, W, H, Ew, Eh, url, seq: ++maskSeq };
+    pendingMask = next;
+    const img = new Image();
+    img.src = url;
+    // Once decoded, the CSS reference to the same URL finds it ready. Apply
+    // it unless the request was dropped, or a later one already landed; one
+    // that's since been superseded still lands, so a continuous resize keeps
+    // updating rather than waiting for the pointer to stop.
+    img.decode().catch(() => {}).then(() => {
+      if (!pendingMask || next.seq <= (painted?.seq ?? 0)) return;
+      if (pendingMask === next) pendingMask = null;
+      applyMask(next);
+    });
+  }
+
+  function applyMask(m) {
+    if (!host?.isConnected) return; // torn down meanwhile
     const st = maskEl.style;
-    st.width = `${Ew}px`;
-    st.height = `${Eh}px`;
-    st.maskImage = `url("data:image/svg+xml,${encodeURIComponent(svg)}"), linear-gradient(#000, #000)`;
-    st.maskSize = `${W}px ${H}px, 100% 100%`;
-    st.maskPosition = `${(Ew - W) / 2}px ${(Eh - H) / 2}px, 0 0`;
-    painted = { key, w, h, Ew, Eh };
+    st.width = `${m.Ew}px`;
+    st.height = `${m.Eh}px`;
+    st.maskImage = `url("${m.url}"), linear-gradient(#000, #000)`;
+    st.maskSize = `${m.W}px ${m.H}px, 100% 100%`;
+    st.maskPosition = `${(m.Ew - m.W) / 2}px ${(m.Eh - m.H) / 2}px, 0 0`;
+    painted = m;
+    render();
+    if (fadeInWaiting && !pendingMask) fadeIn();
+  }
+
+  // Fade the spotlight in, once its mask is on: shown before that, it would
+  // start out with no hole.
+  function fadeIn() {
+    fadeInWaiting = !!pendingMask || !painted;
+    if (fadeInWaiting || !spot.active) return;
+    maskEl.getBoundingClientRect(); // flush styles so the fade-in runs
+    rootEl.classList.add('on');
   }
 
   // Outline, grab zone and resize handles, at the on-screen size so stroke
@@ -405,22 +453,24 @@
     }
   }
 
+  // Full strength is what 2% was on the earlier scale (which started far
+  // stronger); 0% is no effect at all.
   function applyEffect() {
     if (!maskEl) return;
-    const t = clamp(settings.intensity, 0, 100) / 100;
+    const t = clamp(settings.strength, 0, 100) / 100;
     let background;
-    blurPx = 0;
     switch (settings.effect) {
       case 'blur':
-        background = 'rgba(0, 0, 0, 0.1)';
-        blurPx = 2 + t * 22;
+        background = `rgba(0, 0, 0, ${(0.1 * t).toFixed(3)})`;
+        blurPx = 2.44 * t;
         break;
       case 'blur-dim':
-        background = `rgba(0, 0, 0, ${(0.15 + t * 0.6).toFixed(2)})`;
-        blurPx = 8;
+        background = `rgba(0, 0, 0, ${(0.162 * t).toFixed(3)})`;
+        blurPx = 8 * t;
         break;
       default: // dim
-        background = `rgba(0, 0, 0, ${(0.2 + t * 0.75).toFixed(2)})`;
+        background = `rgba(0, 0, 0, ${(0.215 * t).toFixed(3)})`;
+        blurPx = 0;
     }
     maskEl.style.background = background;
     render(); // applies the blur
@@ -458,7 +508,11 @@
     const { x, y, w, h } = visual();
     // Centre the layer (and its hole) on the spotlight; mid-zoom, scale it by
     // the small remainder since the hole was last rebuilt (see paint()).
-    const k = w / painted.w;
+    // While a new mask decodes, the current one can be far off the new size
+    // (a cue jumping to another area). Scaled down much, the layer would no
+    // longer cover the screen, so for those few frames the hole is drawn too
+    // large instead.
+    const k = Math.max(w / painted.w, 0.96);
     maskEl.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${k}) translate(${-painted.Ew / 2}px, ${-painted.Eh / 2}px)`;
     // The backdrop blur scales with the layer, so counter that to keep the
     // blur constant. Only a compositor property change, no repaint.
@@ -516,13 +570,13 @@
       spot.x = mouse.x;
       spot.y = mouse.y;
       render();
-      maskEl.getBoundingClientRect(); // flush styles so the fade-in runs
-      rootEl.classList.add('on');
+      fadeIn();
       showHud('Click to place the spotlight', 2200);
       startLoop();
     } else {
       endDrag();
       if (zoom.el) setZoom(false);
+      fadeInWaiting = false;
       rootEl?.classList.remove('on', 'pinned');
       spot.pinned = false;
       hudEl?.classList.remove('show');
@@ -560,10 +614,7 @@
     hudEl.classList.remove('show');
     measureToolbar();
     applyShape(true);
-    if (!wasActive) {
-      maskEl.getBoundingClientRect(); // flush styles so the fade-in runs
-      rootEl.classList.add('on');
-    }
+    if (!wasActive) fadeIn();
     peekToolbar();
     startLoop();
     if (zoomIn) setZoom(true, { quiet: true });
@@ -1025,7 +1076,11 @@
   }
 
   function onPointerDown(e) {
-    if (!spot.active || spot.pinned || e.button !== 0 || fromOverlay(e)) return;
+    if (spot.pinned) {
+      onOutsidePress(e);
+      return;
+    }
+    if (!spot.active || e.button !== 0 || fromOverlay(e)) return;
     // This click places the spotlight; don't let it also click the page.
     mouse.x = e.clientX;
     mouse.y = e.clientY;
@@ -1042,6 +1097,42 @@
     e.preventDefault();
     e.stopImmediatePropagation();
     if (e.type === 'click') swallowClick = false;
+  }
+
+  // Whether (x, y) is page area around a placed spotlight. Not while a cue is
+  // being recorded (its spotlight is being set up), and a scrollbar (outside
+  // the page's client area) doesn't count.
+  function isOutside(e) {
+    if (!spot.active || !spot.pinned || drag || fromOverlay(e) || api.outsidePaused()) return false;
+    const doc = document.documentElement;
+    if (e.clientX >= doc.clientWidth || e.clientY >= doc.clientHeight) return false;
+    return edgeDistance(e.clientX, e.clientY) > 0;
+  }
+
+  // A press outside a placed spotlight: kept from the page (blockOutside),
+  // and/or turns the spotlight off (closeOnOutside, left button only).
+  function onOutsidePress(e) {
+    blockGesture = false;
+    if (!isOutside(e)) return;
+    if (settings.blockOutside) {
+      blockGesture = true;
+      clearTimeout(blockTimer);
+      blockTimer = setTimeout(() => { blockGesture = false; }, 800);
+      onBlockable(e);
+    }
+    if (settings.closeOnOutside && e.button === 0) setSpotlight(false);
+  }
+
+  // Keep the rest of a blocked press, and any wheel outside the spotlight,
+  // from the page. stopPropagation, not stopImmediatePropagation, so cues.js
+  // (also on window) still sees the click: it can end a cue, though it won't
+  // trigger one.
+  function onBlockable(e) {
+    if (e.type === 'wheel' ? !(settings.blockOutside && isOutside(e)) : !blockGesture) return;
+    if (e.type !== 'contextmenu') e.preventDefault(); // the browser's own menu still opens
+    e.stopPropagation();
+    blockedEvents.add(e);
+    if (e.type === 'click' || e.type === 'contextmenu') blockGesture = false;
   }
 
   function onResize() {
@@ -1112,6 +1203,8 @@
     [window, 'pointerup', onSwallowable, { capture: true }],
     [window, 'mouseup', onSwallowable, { capture: true }],
     [window, 'click', onSwallowable, { capture: true }],
+    ...['mousedown', 'pointerup', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu'].map((type) => [window, type, onBlockable, { capture: true }]),
+    [window, 'wheel', onBlockable, { capture: true, passive: false }],
     [window, 'resize', onResize, { passive: true }],
     [window, 'keydown', onKeyDown, { capture: true }],
     [window, 'keyup', onKeyUp, { capture: true }],
@@ -1124,6 +1217,7 @@
     cancelAnimationFrame(rafId);
     clearTimeout(hudTimer);
     clearTimeout(swallowTimer);
+    clearTimeout(blockTimer);
     clearTimeout(peekTimer);
     cancelAnimationFrame(inkRaf);
     endZoom();
@@ -1154,6 +1248,11 @@
     // Add cue UI to the overlay's shadow root, so the spotlight ignores clicks on it.
     mount: (node) => { ensureOverlay(); rootEl.appendChild(node); },
     isOverlay: fromOverlay,
+    // Whether the spotlight kept this event from the page (blockOutside).
+    isBlocked: (e) => !!e && blockedEvents.has(e),
+    // cues.js replaces this: true while a cue is being recorded, when clicks
+    // outside the spotlight are neither blocked nor close it.
+    outsidePaused: () => false,
     onState: (fn) => { stateListeners.add(fn); },
   };
   globalThis.__spotlight = api;
