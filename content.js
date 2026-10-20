@@ -46,6 +46,10 @@
     inkColor: '#fd44b0',  // disappearing-ink colour (Sentry hot pink)
     blockOutside: false,  // a placed spotlight keeps clicks and scrolling off the page around it
     closeOnOutside: false, // a click outside a placed spotlight turns it off
+    outline: 'dashed',    // dashed | solid | none: the spotlight's edge outline
+    outlineShow: 'hover', // hover (only with the cursor in or near the spotlight) | always
+    zoomDuration: 280,    // ms; every frame of a zoom changes the whole screen, so keep it short
+    zoomEasing: 'out',    // a key of EASINGS
   };
   const MIN_SIZE = 60;
   const ROUNDED_RADIUS = 18;
@@ -58,8 +62,14 @@
   const FOLLOW_SNAP = 0.5;  // …until this close (px)
   const SIZE_EASE = 0.2;    // per-frame easing toward a new size…
   const SIZE_SNAP = 1;      // …until this close (px)
-  // Every frame of a zoom changes the whole screen, so keep it short.
-  const ZOOM_MS = 280;      // duration of the zoom animation
+  const ZOOM_MAX_MS = 1000;
+  // Zoom easing curves, t in 0..1.
+  const EASINGS = {
+    out: (t) => 1 - (1 - t) ** 3,                                       // cubic ease-out
+    'in-out': (t) => (t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2), // cubic ease-in-out
+    linear: (t) => t,
+    snap: (t) => (t === 1 ? 1 : 1 - 2 ** (-10 * t)),                    // exponential ease-out
+  };
   const ZOOM_FILL = 0.8;    // preferred: the zoomed spotlight fills 80% of the window, keeping context
   const ZOOM_MIN_GAIN = 1.25; // large spotlights still zoom at least this much, if it fits
   const ZOOM_MARGIN = 12;   // px kept clear between a zoomed spotlight and the window edge
@@ -98,7 +108,7 @@
   let drag = null;               // { pointerId, offX, offY } while dragging
   // The zoom is one view transform: a page point v (in normal, unzoomed
   // viewport coordinates) is shown at  screen = o + s·v.  `view` moves from
-  // `from` to `goal` over ZOOM_MS from `start`, all components by the same
+  // `from` to `goal` over settings.zoomDuration from `start`, all components by the same
   // fraction, so any point that starts and ends at the same screen spot stays
   // put throughout. The
   // spotlight's own coordinates (spot.*) are page coordinates.
@@ -149,6 +159,11 @@
       settings.shape = settings.shape === 'ellipse' ? 'circle' : 'rounded';
     }
     if (!['dim', 'blur', 'blur-dim'].includes(settings.effect)) settings.effect = 'dim';
+    if (!['dashed', 'solid', 'none'].includes(settings.outline)) settings.outline = DEFAULTS.outline;
+    if (!['hover', 'always'].includes(settings.outlineShow)) settings.outlineShow = DEFAULTS.outlineShow;
+    if (!(settings.zoomEasing in EASINGS)) settings.zoomEasing = DEFAULTS.zoomEasing;
+    const ms = Number(settings.zoomDuration);
+    settings.zoomDuration = Number.isFinite(ms) ? clamp(ms, 0, ZOOM_MAX_MS) : DEFAULTS.zoomDuration;
   }
 
   // ---------------------------------------------------------------- overlay
@@ -201,6 +216,11 @@
         .edge .ring .outline { opacity: 1; }
         .edge .ring .line { stroke-width: 2; }
         .edge .ring .halo { stroke-width: 4; }
+        /* The outline setting: a solid line instead of dashes, or none at all
+           (the edge can still be grabbed, and the handles still show). */
+        .outline-solid .ring .line, .outline-solid .ring .halo { stroke-dasharray: none; }
+        .outline-none .ring .outline { display: none; }
+        .outline-always .ring .outline { opacity: 1; }
         .dragging, .dragging * { cursor: grabbing !important; }
 
         .handles { position: fixed; left: 0; top: 0; display: none; pointer-events: none; will-change: transform; }
@@ -310,6 +330,13 @@
     document.documentElement.appendChild(host);
     applyShape();
     applyEffect();
+    applyOutline();
+  }
+
+  function applyOutline() {
+    if (!rootEl) return;
+    for (const style of ['solid', 'none']) rootEl.classList.toggle(`outline-${style}`, settings.outline === style);
+    rootEl.classList.toggle('outline-always', settings.outlineShow === 'always');
   }
 
   // The hole: an SVG of the shape (black on transparent), feathered with a
@@ -784,9 +811,10 @@
   function stepZoom() {
     const v = zoom.view;
     const { from: f, goal: g } = zoom;
-    const t = clamp((performance.now() - zoom.start) / ZOOM_MS, 0, 1);
+    const ms = settings.zoomDuration;
+    const t = ms > 0 ? clamp((performance.now() - zoom.start) / ms, 0, 1) : 1;
     const moving = t < 1;
-    const e = 1 - (1 - t) ** 3; // ease-out
+    const e = EASINGS[settings.zoomEasing](t);
     v.s = f.s + (g.s - f.s) * e;
     v.ox = f.ox + (g.ox - f.ox) * e;
     v.oy = f.oy + (g.oy - f.oy) * e;
@@ -1224,6 +1252,7 @@
     }
     applyShape();
     applyEffect();
+    applyOutline();
   }
 
   const listeners = [
@@ -1298,5 +1327,6 @@
     normalizeSettings();
     applyShape();
     applyEffect();
+    applyOutline();
   }).catch(() => {});
 })();

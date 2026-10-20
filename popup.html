@@ -175,6 +175,21 @@
       <div class="slider"><input type="range" id="strength" min="0" max="100" step="1"><output id="strengthOut"></output></div>
     </label>
     <div class="row">
+      <span>Outline</span>
+      <div class="seg" data-setting="outline">
+        <button data-value="none">None</button>
+        <button data-value="dashed">Dashed</button>
+        <button data-value="solid">Line</button>
+      </div>
+    </div>
+    <div class="row" id="outlineShowRow">
+      <span title="When the outline is visible">Show</span>
+      <div class="seg" data-setting="outlineShow">
+        <button data-value="hover" title="Only while the cursor is over or near the spotlight">On hover</button>
+        <button data-value="always">Always</button>
+      </div>
+    </div>
+    <div class="row">
       <span>Ink</span>
       <div class="swatches" data-setting="inkColor">
         <button data-value="#fd44b0" style="--c:#fd44b0" aria-label="Pink"></button>
@@ -190,6 +205,19 @@
       <div class="seg toggles">
         <button data-toggle="autoZoomPlace" title="Zoom in as soon as you click to place the spotlight">On place</button>
         <button data-toggle="autoZoomResize" title="Zoom in when you finish resizing the spotlight">After resize</button>
+      </div>
+    </div>
+    <label class="row">
+      <span title="How long zooming in or out takes">Duration</span>
+      <div class="slider"><input type="range" id="zoomDuration" min="0" max="1000" step="20"><output id="zoomDurationOut"></output></div>
+    </label>
+    <div class="row">
+      <span title="How the zoom speeds up and slows down">Easing</span>
+      <div class="seg" data-setting="zoomEasing">
+        <button data-value="out" title="Starts fast, slows into place">Ease out</button>
+        <button data-value="in-out" title="Starts and ends gently">In-out</button>
+        <button data-value="linear" title="Constant speed">Linear</button>
+        <button data-value="snap" title="Very fast start, long gentle settle">Snap</button>
       </div>
     </div>
     <div class="row">

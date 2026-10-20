@@ -608,11 +608,18 @@
   // click target, or the target itself.
   const triggerElement = (target) => target.closest(INTERACTIVE) || target;
 
+  const BAR_REACH = 60; // px around the recording bar where it won't dodge
+
   function onRecordMove(e) {
     if (!rec || !ui) return;
+    // The bar dodges a cursor near its edge of the screen, but holds still
+    // while the cursor is on or heading to it, so its controls stay reachable.
+    const b = ui.bar.getBoundingClientRect();
+    const near = e.clientX > b.left - BAR_REACH && e.clientX < b.right + BAR_REACH
+      && e.clientY > b.top - BAR_REACH && e.clientY < b.bottom + BAR_REACH;
     const low = ui.bar.classList.contains('low');
-    if (!low && e.clientY < 90) ui.bar.classList.add('low');
-    else if (low && e.clientY > innerHeight - 150) ui.bar.classList.remove('low');
+    if (!near && !low && e.clientY < 90) ui.bar.classList.add('low');
+    else if (!near && low && e.clientY > innerHeight - 150) ui.bar.classList.remove('low');
     if (!picking()) return;
     if (!(e.target instanceof Element) || api.isOverlay(e)) {
       ui.pick.style.display = 'none';
