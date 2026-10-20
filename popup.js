@@ -11,6 +11,10 @@ const DEFAULTS = {
   inkColor: '#fd44b0',
   blockOutside: false,
   closeOnOutside: false,
+  outline: 'dashed',
+  outlineShow: 'hover',
+  zoomDuration: 280,
+  zoomEasing: 'out',
 };
 
 const $ = (id) => document.getElementById(id);
@@ -22,6 +26,7 @@ const SLIDERS = {
   width: (v) => `${v}`,
   height: (v) => `${v}`,
   strength: (v) => `${v}%`,
+  zoomDuration: (v) => (v ? `${v}ms` : 'Off'),
 };
 
 function save(patch) {
@@ -60,6 +65,7 @@ function syncVisibility() {
   const circle = settings.shape === 'circle';
   $('widthLabel').textContent = circle ? 'Size' : 'Width';
   $('heightRow').hidden = circle;
+  $('outlineShowRow').hidden = settings.outline === 'none';
   if (viewport) {
     const longest = Math.max(viewport.w, viewport.h);
     setSliderMax('width', circle ? longest : viewport.w);
