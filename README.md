@@ -1,3 +1,8 @@
+
+
+https://github.com/user-attachments/assets/9b768607-e374-4227-9abe-369cf700298b
+
+
 # Spotlight
 
 A Manifest V3 Chrome extension that spotlights part of a web page while you present it over a tab or window share (Google Meet, Zoom, and others). It works in the page's DOM, so viewers see exactly what you see.
